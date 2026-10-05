@@ -85,3 +85,75 @@ hr{border:none;border-top:1px solid var(--line);margin:14px 0}
 .thumb .cap{font-size:10.5px;color:var(--sub);padding:3px 6px}
 .thumb.sel{outline:3px solid var(--ng)}
 pre.code{white-space:pre-wrap;word-break:break-all;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:11.5px;max-height:240px;overflow:auto}
+
+/* ===== v3：ゲームUI ===== */
+.kicker{font-size:10.5px;letter-spacing:.22em;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:2px}
+.logo{letter-spacing:.18em;font-size:15px}
+.hot{color:var(--gold2);font-weight:700}
+.tile.cleared{border-color:rgba(95,211,160,.5);background:linear-gradient(160deg,#10231b,#171b25 60%)}
+.tile.fav{border-color:rgba(217,180,106,.45)}
+.chip.off{opacity:.4;text-decoration:line-through}
+.btn.star{color:var(--sub)} .btn.star.on{color:var(--gold2);border-color:var(--gold)}
+.brief h3{font-size:18px;margin:2px 0 6px}
+.placebar{display:flex;gap:6px;margin:12px 0 2px;overflow-x:auto;scrollbar-width:none}
+.placebar::-webkit-scrollbar{display:none}
+.pchip{flex:1;min-width:58px;border:1px solid var(--line);background:var(--bg2);border-radius:14px;padding:7px 4px;display:flex;flex-direction:column;align-items:center;font-size:18px;color:var(--sub);cursor:pointer}
+.pchip span{font-size:11px;margin-top:2px}
+.pchip.on{border-color:var(--gold);background:#211c10;color:var(--gold2)}
+.drinkcard{border-color:rgba(111,168,255,.35);background:linear-gradient(160deg,#0f1828,#171b25 60%)}
+.drinkcard .kicker{color:var(--blue)}
+.recovery{border-color:rgba(95,211,160,.45);background:linear-gradient(160deg,#0f2219,#171b25 65%)}
+.recovery .kicker{color:var(--ok)}
+.special.theme-golf,.lv.theme-golf{border-color:rgba(95,211,160,.55);background:linear-gradient(160deg,#0e2418,#171b25 60%)}
+.special.theme-golf .kicker{color:var(--ok)}
+.special.theme-travel,.lv.theme-travel{border-color:rgba(111,168,255,.55);background:linear-gradient(160deg,#0f1a2e,#171b25 60%)}
+.special.theme-travel .kicker{color:var(--blue)}
+.stepper{display:flex;gap:8px;align-items:center;margin:8px 0}
+.stepper input{text-align:center;font-size:24px;font-weight:800}
+.stepper .btn{width:56px;font-size:22px;margin:0}
+/* XP ポップ */
+.xppop{position:fixed;left:50%;bottom:calc(120px + var(--safe-b));transform:translateX(-50%);z-index:40;display:flex;flex-direction:column;align-items:center;pointer-events:none;animation:xpup 1.5s ease-out forwards}
+.xppop b{font-size:26px;color:var(--gold2);text-shadow:0 0 18px rgba(217,180,106,.7);letter-spacing:.04em}
+.xppop span{font-size:12.5px;color:var(--text);background:rgba(23,27,37,.92);border:1px solid var(--line);padding:3px 10px;border-radius:99px;margin-top:4px;max-width:86vw;text-align:center}
+@keyframes xpup{0%{opacity:0;transform:translate(-50%,20px) scale(.9)}15%{opacity:1;transform:translate(-50%,0) scale(1.05)}70%{opacity:1;transform:translate(-50%,-30px)}100%{opacity:0;transform:translate(-50%,-60px)}}
+/* MISSION CLEAR 演出 */
+.fx{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at 50% 40%,rgba(40,32,14,.92),rgba(5,6,9,.96));display:grid;place-items:center;animation:fxin .25s ease-out}
+.fx.out{animation:fxout .22s ease-in forwards}
+.fx-card{position:relative;width:min(88vw,380px);text-align:center;padding:28px 20px 20px;border:1px solid rgba(217,180,106,.6);border-radius:24px;background:linear-gradient(170deg,#211b0e,#12151d 70%);box-shadow:0 0 60px rgba(217,180,106,.25);overflow:hidden}
+.fx-burst{position:absolute;inset:-40%;background:conic-gradient(from 0deg,transparent 0 20deg,rgba(241,217,162,.10) 20deg 30deg,transparent 30deg 60deg,rgba(241,217,162,.08) 60deg 70deg,transparent 70deg);animation:spin 6s linear infinite;pointer-events:none}
+.fx-title{position:relative;font-size:30px;font-weight:900;letter-spacing:.12em;background:linear-gradient(90deg,#fff3d2,var(--gold2),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent;animation:pop .5s cubic-bezier(.2,1.6,.4,1)}
+.fx-sub{position:relative;color:var(--text);margin-top:6px;font-size:14px}
+.fx-xp{position:relative;font-size:40px;font-weight:900;color:var(--gold2);margin:14px 0 6px;text-shadow:0 0 24px rgba(217,180,106,.6)}
+.fx-list{position:relative;font-size:13px;color:var(--sub)}
+.fx-list div{display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.06);padding:5px 4px}
+.fx-list b{color:var(--gold2)}
+.fx-lv{position:relative;margin-top:10px;font-weight:800;color:#06231a;background:var(--ok);border-radius:12px;padding:8px;animation:pop .6s .3s both cubic-bezier(.2,1.6,.4,1)}
+.fx-badge{position:relative;margin-top:8px;font-weight:700;color:var(--gold2);border:1px solid var(--gold);border-radius:12px;padding:7px;animation:pop .6s .45s both cubic-bezier(.2,1.6,.4,1)}
+.fx-next{position:relative;margin-top:10px;font-size:13px;color:var(--gold2)}
+.fx.perfect .fx-card{border-color:var(--gold2);box-shadow:0 0 90px rgba(241,217,162,.45)}
+.fx.perfect .fx-title{font-size:34px}
+.fx.golf .fx-card{border-color:rgba(95,211,160,.7);background:linear-gradient(170deg,#0e2418,#12151d 70%)}
+.fx.travel .fx-card{border-color:rgba(111,168,255,.7);background:linear-gradient(170deg,#0f1a2e,#12151d 70%)}
+@keyframes fxin{from{opacity:0}to{opacity:1}} @keyframes fxout{to{opacity:0;transform:scale(.98)}}
+@keyframes pop{0%{transform:scale(.6);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* 戦績 */
+.rankrow{display:flex;gap:14px;align-items:center}
+.rank{width:58px;height:58px;border-radius:16px;display:grid;place-items:center;font-size:30px;font-weight:900;border:2px solid var(--line);color:var(--sub)}
+.rank.rS{color:#1a1306;background:radial-gradient(circle at 30% 30%,#fff3d2,var(--gold));border:none;box-shadow:0 0 22px rgba(217,180,106,.5)}
+.rank.rA{color:var(--gold2);border-color:var(--gold)} .rank.rB{color:var(--ok);border-color:var(--ok)} .rank.rC{color:var(--blue);border-color:var(--blue)}
+.statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:12px 0 4px;text-align:center}
+.statgrid div{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:8px 2px}
+.statgrid b{display:block;font-size:17px}
+.statgrid span{font-size:10.5px;color:var(--sub)}
+.comment{margin-top:8px;font-size:13.5px;line-height:1.7}
+.bars{display:flex;gap:6px;align-items:flex-end;height:150px;margin:10px 0 6px}
+.bcol{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end}
+.bbar{width:100%;max-width:30px;border-radius:8px 8px 3px 3px;background:var(--line)}
+.bbar.ok{background:linear-gradient(180deg,var(--gold2),var(--gold))}
+.bbar.perfect{background:linear-gradient(180deg,#fff3d2,var(--gold2));box-shadow:0 0 12px rgba(241,217,162,.6)}
+.bval{font-size:10.5px;color:var(--sub);margin-bottom:2px}
+.blab{font-size:10px;color:var(--sub);text-align:center;margin-top:4px;line-height:1.25}
+.wrow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;margin-top:8px}
+.wrow b{display:block;font-size:13px}
+.dayrow.perfect{border-color:rgba(241,217,162,.5)}

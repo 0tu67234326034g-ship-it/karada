@@ -170,6 +170,48 @@
     return `${E.shortStore(storeName)}で、${food.join('、')}${d ? `、飲み物は${label(d)}を${d.qty || 1}本` : ''}買え！`;
   };
 
+  /* ---------- 同じメニューの出しすぎ防止 ----------
+     過去7日（＋今日のほかの食事）の履歴から、商品・同系統（サラダチキン、同じ店の同じ料理）・組み合わせを重み付けで減点。
+     お気に入り（★）は減点を弱め、少し加点して「たまに出る」ようにする */
+  E.family = (it, chainId) => {
+    if (/サラダチキン/.test(it.name)) return 'fam:サラダチキン';
+    if (chainId || it.chain) return 'fam:' + (chainId || it.chain) + ':' + it.name.replace(/[（(].*?[)）]/g, '').trim();
+    if (it.category === 'おにぎり') return 'fam:おにぎり:' + it.name.replace(/^(手巻|直巻|大きな)?\s*(おにぎり|おむすび)?\s*/, '').slice(0, 6);
+    return null;
+  };
+  E.comboKey = items => items.filter(i => i.role !== 'drink').map(i => i.id).sort().join('|');
+  /* days: [{ago, items:[{id,name,category,role}], chain}] ago=0 は今日のほかの食事 */
+  E.makeHistory = days => {
+    const h = { item:{}, fam:{}, combo:{}, last:{} };
+    const w = ago => ago <= 0 ? 1.6 : ago === 1 ? 1.3 : Math.max(0.45, 1.15 - ago * 0.1);
+    for (const d of days) {
+      const ww = w(d.ago);
+      for (const it of d.items) {
+        h.item[it.id] = (h.item[it.id] || 0) + ww;
+        h.last[it.id] = Math.min(h.last[it.id] ?? 99, d.ago);
+        const f = E.family(it, d.chain); if (f) h.fam[f] = (h.fam[f] || 0) + ww;
+      }
+      const ck = E.comboKey(d.items); if (ck) h.combo[ck] = (h.combo[ck] || 0) + ww;
+    }
+    return h;
+  };
+  E.histFromIds = ids => E.makeHistory([{ ago:2, items:(ids || []).map(id => ({ id, name:'' })) }]);
+  E.repeatPenalty = (items, h, prof, chainId) => {
+    if (!h) return 0;
+    const fav = new Set(prof?.favItems || []);
+    let p = 0;
+    for (const it of items) {
+      const k = fav.has(it.id) ? 0.35 : 1;
+      p += (h.item[it.id] || 0) * 0.8 * k;
+      if (h.last[it.id] != null && h.last[it.id] <= 1) p += 1.2 * k;          // 昨日・今日も出た
+      const f = E.family(it, chainId); if (f && h.fam[f]) p += h.fam[f] * 0.35 * k;
+      if (fav.has(it.id) && !(h.last[it.id] <= 2)) p -= 0.35;                  // お気に入りはたまに出す
+    }
+    const ck = E.comboKey(items.map(i => ({ ...i, role: i.role || 'x' })));
+    if (h.combo[ck]) p += h.combo[ck] * 1.5;
+    return p;
+  };
+
   /* ---------- コンビニ食事ミッション（候補を複数作り、上位3案を返す） ---------- */
   E.convMission = (ctx) => {
     const { products, store, storeName, meal, target, prof, recentIds = [], seed, soldout = [], exclude = [], bigger = false, lighter = false } = ctx;
@@ -204,7 +246,7 @@
       if (s.protein < protT) score += (protT - s.protein) / protT * 2.2;
       if (s.price > budget) score += (s.price - budget) / budget * 4;
       score += s.unknown * 0.8;
-      score += combo.reduce((a, p) => a + recentIds.filter(r => r === p.id).length * 0.6, 0);
+      score += E.repeatPenalty(combo, ctx.hist || E.histFromIds(recentIds), prof);
       score += s.salt > 4 ? (s.salt - 4) * 0.3 : 0;
       score += rnd() * 0.35;
       seen.set(key, { combo, score });
@@ -261,6 +303,14 @@
     '寿司': ''
   };
   const chainLabel = i => i.name + (i.size ? `（${i.size}）` : '');
+  /* 外食の飲み物：無料の水・お茶が出る店はそれを優先。出ない店は登録メニューの無糖ドリンク */
+  E.freeWater = chain => chain.freeWater ?? !['ファストフード・カフェ'].includes(chain.genre);
+  E.chainDrinkLine = (chain, drinks) => {
+    if (chain.sushi) return '無料のお茶（粉茶）か水';
+    if (E.freeWater(chain)) return '無料のお水かお茶';
+    if (drinks.length) return `「${chainLabel(drinks[0])}」`;
+    return '水か無糖のお茶（無ければ一番小さいサイズの無糖ドリンク）';
+  };
   E.chainMission = (ctx) => {
     const { chain, meal, target, prof, recentIds = [], seed, appetite = 'normal', soldout = [] } = ctx;
     const rnd = E.rng(seed);
@@ -278,14 +328,14 @@
       for (let i = 0; left > 0 && sh.length; i++) { const n = sh[i % sh.length]; const ex = order.find(o => o.name === n); if (ex) ex.qty++; else order.push({ name:n, qty:1 }); left--; }
       const side = SUSHI_SIDE.filter(s => !E.blocked(s, prof));
       const sidePick = side[Math.floor(rnd()*side.length)];
-      const cmd = `${chain.name}で、` + order.map(o => `${o.name}${o.qty}皿`).join('、') + (sidePick ? `、${sidePick}1つ` : '') + 'を注文しろ！';
+      const cmd = `${chain.name}で、` + order.map(o => `${o.name}${o.qty}皿`).join('、') + (sidePick ? `、${sidePick}1つ` : '') + 'を注文しろ！ 飲み物は無料のお茶で。';
       const allergyNote = (prof.allergies || []).length ? `アレルギー登録があります。この店のアレルゲン情報は未登録のため、注文前に店のアレルゲン表で必ず確認してください。` : '';
-      return { kind:'sushi', chain: chain.id, storeName: chain.name, meal, order, side: sidePick, cmd, plates,
+      return { kind:'sushi', chain: chain.id, storeName: chain.name, meal, order, side: sidePick, cmd, plates, drinkLine: E.chainDrinkLine(chain, []),
         caution: '皿数は目安です（この店のメニュー・栄養成分は未登録）。揚げ物・マヨ系・ラーメンは今回は見送り。ネタが無い時は「〇〇が無い」で入れ替え。' + allergyNote };
     }
     if (!usable.length) {
       const why = items.length && (prof.allergies || []).length ? 'アレルゲン情報が確認できるメニューが無いため、この店の登録メニューからは指定できません。' : '';
-      return { kind:'guide', chain: chain.id, storeName: chain.name, meal, cmd: `${chain.name}では、メニュー表を撮影してAIに選ばせろ！`, guide: (why ? why + ' ' : '') + (GENRE_GUIDE[chain.genre] || GENRE_GUIDE['個人店']), needsPhoto:true };
+      return { kind:'guide', chain: chain.id, storeName: chain.name, meal, cmd: `${chain.name}では、メニュー表を撮影してAIに選ばせろ！`, guide: (why ? why + ' ' : '') + (GENRE_GUIDE[chain.genre] || GENRE_GUIDE['個人店']), needsPhoto:true, drinkLine: E.chainDrinkLine(chain, []) };
     }
     const mains = usable.filter(i => (i.role || i.category || 'main') === 'main');
     const sides = usable.filter(i => ['side'].includes(i.role || i.category));
@@ -302,7 +352,7 @@
       if (s.complete) { sc += Math.abs(s.kcal - kcalT) / kcalT * 3; if (s.protein < protT) sc += (protT - s.protein) / protT * 1.5; }
       else sc += 1.2 + (c[0].nutrition?.kcal != null ? Math.abs(c[0].nutrition.kcal - kcalT) / kcalT : 0.5);
       if (s.price && s.price > (+prof.budget || 900) * 1.3) sc += 1;
-      sc += c.reduce((a, x) => a + recentIds.filter(r => r === x.id).length * 0.5, 0);
+      sc += E.repeatPenalty(c, ctx.hist || E.histFromIds(recentIds), prof, chain.id);
       if ((c[0].nutrition?.salt ?? 0) >= 5) sc += 0.3;
       sc += rnd() * 0.3;
       return { c, s, sc };
@@ -311,12 +361,12 @@
     for (const r of scored) { if (plans.length >= 3) break; if (plans.some(p => p.c[0].id === r.c[0].id) && scored.length > 4) continue; plans.push(r); }
     const build = r => {
       const order = r.c.map(x => ({ ...x, qty:1 }));
-      const d = drinks[0];
-      const cmd = `${chain.name}で` + order.map(x => `「${chainLabel(x)}」を${x.qty}つ`).join('、') + (d ? `、飲み物は「${chainLabel(d)}」` : '') + '注文しろ！';
+      const drinkLine = E.chainDrinkLine(chain, drinks);
+      const cmd = `${chain.name}で` + order.map(x => `「${chainLabel(x)}」を${x.qty}つ`).join('、') + '注文しろ！ 飲み物は' + drinkLine + '。';
       let tip = '';
       if (/定食/.test(order[0].name)) tip = 'ご飯は小盛にできるなら小盛に。';
       if (order.some(x => (x.nutrition?.salt ?? 0) >= 4)) tip += 'みそ汁・タレ・スープは残して塩分カット。';
-      return { items: order, sum: r.s, cmd, tip, verdict: E.verdict(r.s, kcalT, protT) };
+      return { items: order, sum: r.s, cmd, tip, drinkLine, verdict: E.verdict(r.s, kcalT, protT) };
     };
     const built = plans.map(build);
     const unverified = (prof.allergies || []).length ? built[0].items.filter(i => E.allergyStatus(i, prof) === 'unverified').map(i => i.name) : [];
@@ -342,42 +392,123 @@
     return { kind:'snack', store, storeName, items:[{ ...p, qty:1, role:'snack' }], sum: sumN([p]), cmd: `${E.shortStore(storeName)}で「${label(p)}」を1個買え！`, tip: extra + '我慢しすぎず、決めた量を楽しめ。' };
   };
 
-  /* ---------- 飲み物ミッション ---------- */
-  E.drinkPlan = (sched, prof, vending = []) => {
+  /* ---------- 場所 ---------- */
+  E.PLACES = { home:{label:'自宅',em:'🏠'}, office:{label:'会社',em:'🏢'}, out:{label:'外出先',em:'🚶'}, golf:{label:'ゴルフ場',em:'⛳'}, other:{label:'その他',em:'📍'} };
+  E.defaultPlace = type => ({ work:'office', golf:'golf', softball:'out', holiday:'home', travel:'out' })[type] || 'home';
+
+  /* ---------- 飲み物ミッション ----------
+     時刻の「枠」だけを作り、文言はその時の場所・食事・カフェイン量から決める。
+     飲み物のためだけに買い物させない（手元の水・会社の自販機・食事と一緒に買う物を優先） */
+  E.drinkSlots = (sched, prof) => {
     const wake = prof.wake || '07:00', sleep = prof.sleep || '23:30';
-    const vend = vending.flatMap(v => v.items.map(i => ({ ...i, place: v.name })));
-    const vendTea = vend.find(i => /茶|水/.test(i.name) && !(i.caffeineMg > 30));
     const L = [];
-    const add = (time, text, kind='water', ml=200) => L.push({ id: time + kind + L.length, time, text, kind, ml, done:false });
-    add(wake, '起きたら水をコップ1杯飲め！');
-    add(addMin(wake, 60), '朝食と一緒に無糖のお茶を飲め！', 'tea');
+    const add = (time, kind, ml = 200, extra = {}) => L.push({ id: 'd' + time.replace(':', '') + kind + L.length, time, kind, ml, done:false, v:3, ...extra });
+    add(wake, 'wake');
+    add(addMin(wake, 45), 'meal', 200, { meal:'breakfast' });
     if (sched?.type === 'golf') {
       const st = sched.golf?.start || '08:30';
-      add(addMin(st, -30), 'スタート前に水かお茶をコップ1杯飲め！');
-      for (let h = 1; h <= 6; h++) add(addMin(st, h*45), `${h*3}ホール目：水を150〜200ml飲め！`, 'water', 180);
-      add(addMin(st, 120), 'ハーフ前後：スポーツドリンクで塩分も補給しろ！', 'salt', 250);
-      add(addMin(st, 300), 'ラウンド後：水を2杯飲め！', 'water', 400);
+      const hot = (+sched.golf?.temp || 0) >= 28;
+      add(addMin(st, -30), 'pre');
+      for (let h = 1; h <= 6; h++) add(addMin(st, h * 45), (h === 3 || (hot && h % 2 === 0)) ? 'salt' : 'round', 180, { hole: h * 3 });
+      add(addMin(st, 150), 'meal', 250, { meal:'lunch' });
+      add(addMin(st, 330), 'post', 400);
     } else if (sched?.type === 'softball') {
-      const st = sched.softball?.start || '09:00';
+      const st = sched.softball?.start || '09:00', en = sched.softball?.end || addMin(st, 180);
       const hot = (+sched.softball?.temp || 0) >= 28;
-      add(addMin(st, -30), '開始30分前：水をコップ1杯飲め！');
-      for (let h = 1; h <= 4; h++) add(addMin(st, h*30), hot ? `${h*30}分：スポーツドリンクを150〜200ml飲め！` : `${h*30}分：水を150〜200ml飲め！`, hot ? 'salt' : 'water', 180);
-      add(addMin(st, 150), '終了後：水を2杯飲め！', 'water', 400);
+      const dur = Math.max(60, (toMin(en) - toMin(st)));
+      add(addMin(st, -30), 'pre');
+      for (let m = 30; m < dur; m += 30) add(addMin(st, m), hot || m % 60 === 0 && sched.softball?.intensity !== 'practice' ? 'salt' : 'play', 180, { minute: m });
+      add(addMin(en, 15), 'post', 400);
+      add('12:30', 'meal', 200, { meal:'lunch' });
     } else {
-      add(addMin(wake, 180), vendTea ? `${vendTea.place}の「${vendTea.name}」を飲め！` : '午前中：無糖のお茶を飲め！', 'tea', 300);
-      add('12:30', '昼食と一緒に水かお茶を飲め！', 'tea');
-      add('15:00', '15時：水をコップ1杯飲め！');
-      add('17:30', '夕方：水をコップ1杯飲め！');
+      add(addMin(wake, 180), 'am', 250);
+      add('12:30', 'meal', 200, { meal:'lunch' });
+      add('15:00', 'pm', 250);
+      add('17:30', 'eve', 200);
     }
-    add('19:30', '夕食と一緒にお茶か水を飲め！', 'tea');
-    add(addMin(sleep, -90), '寝る前：水を半分だけ飲め（飲みすぎ注意）', 'water', 100);
-    return L.sort((a,b) => a.time.localeCompare(b.time));
+    if (sched?.plan?.dinner === 'drinking') add('18:40', 'predrink', 250);
+    add('19:30', 'meal', 200, { meal:'dinner' });
+    add(addMin(sleep, -90), 'night', 100);
+    return L.sort((a, b) => a.time.localeCompare(b.time));
+  };
+  E.drinkPlan = (sched, prof) => E.drinkSlots(sched, prof); // 互換
+  function toMin(hhmm){ const [h, m] = (hhmm || '0:0').split(':').map(Number); return h * 60 + m; }
+  E.toMin = toMin;
+  const NON_CAF = /水|麦茶|ルイボス|炭酸水|コーン茶|十六茶|そば茶/;
+  const isVendWaterTea = i => (/水|茶/.test(i.name) && !/ミルク|ラテ|紅茶花伝|ミルクティー/.test(i.name));
+
+  /* 枠の文言。ctx = { place, vending:[{name,size,caffeineMg,place}], coffeeCount, caffeineMg, meals, sched, now } */
+  E.drinkText = (slot, ctx) => {
+    if (!slot.v) return { text: slot.text, src:'old' };
+    const place = ctx.place || 'home';
+    const cups = n => n >= 2 ? `${n}杯` : '1杯';
+    const late = toMin(ctx.now || '12:00') >= toMin('16:00');
+    const vend = (ctx.vending || []).filter(isVendWaterTea);
+    const pickVend = () => {
+      if (!vend.length) return null;
+      const noCaf = vend.filter(i => NON_CAF.test(i.name) || i.caffeineMg === 0);
+      const pool = (ctx.coffeeCount >= 2 || ctx.caffeineMg >= 250 || late) && noCaf.length ? noCaf : vend;
+      return pool[(slot.time.charCodeAt(1) + slot.time.charCodeAt(4)) % pool.length];
+    };
+    const general = (half) => {
+      if (place === 'office') {
+        const v = pickVend();
+        if (v) {
+          const why = ctx.coffeeCount >= 2 ? `今日はコーヒーを${ctx.coffeeCount}本飲んでいるので、次は` : late ? '夕方以降はカフェイン控えめ。' : '';
+          return { text: `${why}自販機の「${v.name}${v.size ? ' ' + v.size : ''}」を選べ！（手元に水があれば水でOK）`, src:'vending' };
+        }
+        return { text: ctx.coffeeCount >= 2 ? `今日はコーヒーを${ctx.coffeeCount}杯。次は水をコップ1杯飲め！（給水機・持参の水）` : '水をコップ1杯飲め！（給水機・持参の水）', src:'water' };
+      }
+      if (place === 'out') return { text: '手元の水かお茶を一口〜1杯飲め！ 手元に無ければ次の食事の時でOK（飲み物のためだけに買わない）', src:'hand' };
+      if (place === 'golf') return { text: '茶店か手元の水・お茶を飲め！', src:'hand' };
+      if (place === 'other') return { text: '手元の水を飲め！ 無ければ次の食事の時でOK', src:'hand' };
+      return { text: half ? '水をコップ半分だけ飲め！（寝る前なので飲みすぎ注意）' : '水をコップ1杯飲め！', src:'water' };
+    };
+    switch (slot.kind) {
+      case 'wake': return { text: '起きたら水をコップ1杯飲め！', src:'water' };
+      case 'night': return general(true);
+      case 'am': case 'pm': case 'eve': return general(false);
+      case 'predrink': return { text: '飲み会の前に水をコップ1杯！ 乾杯後もお酒1杯ごとに水1杯を挟め', src:'water' };
+      case 'pre': return { text: slot.time && ctx.sched?.type === 'golf' ? 'スタート30分前：水をコップ1杯飲め！' : '開始30分前：水をコップ1杯飲め！', src:'water' };
+      case 'round': return { text: `${slot.hole}ホール目：水かお茶を150〜200ml飲め！（茶店・持参分）`, src:'hand' };
+      case 'play': return { text: `${slot.minute}分経過：水を150〜200ml飲め！`, src:'hand' };
+      case 'salt': return { text: `${slot.hole ? slot.hole + 'ホール目' : slot.minute + '分経過'}：スポーツドリンク150〜200mlで塩分も補給しろ！${ctx.sched?.golf?.temp >= 28 || ctx.sched?.softball?.temp >= 28 ? '（暑い日は特に）' : ''}`, src:'salt' };
+      case 'post': return { text: '運動おつかれ！ 水を2杯に分けて飲め！', src:'water' };
+      case 'meal': {
+        const m = ctx.meals?.[slot.meal];
+        const ms = m?.mission;
+        const d = ms?.items?.find(i => i.role === 'drink');
+        if (d) return { text: `${E.MEAL_LABEL[slot.meal]}と一緒に、買った「${d.name}」を飲め！`, src:'meal' };
+        if (ms?.drinkLine) return { text: `${E.MEAL_LABEL[slot.meal]}の飲み物は${ms.drinkLine}にしろ！`, src:'meal' };
+        if (ctx.sched?.plan?.[slot.meal] === 'drinking') return { text: '乾杯前に水1杯！ お酒1杯ごとに水1杯を挟め', src:'water' };
+        if (place === 'office' && slot.meal !== 'breakfast') return general(false);
+        if (m?.homeRecord) return { text: `${E.MEAL_LABEL[slot.meal]}と一緒に水をコップ1杯飲め！`, src:'water' };
+        if (place === 'out' || place === 'golf') return { text: `${E.MEAL_LABEL[slot.meal]}と一緒に、手元の水かお店の無料の水・お茶を飲め！`, src:'free' };
+        return { text: `${E.MEAL_LABEL[slot.meal]}と一緒に水をコップ1杯飲め！`, src:'water' };
+      }
+    }
+    return general(false);
+  };
+  /* 旧形式（文言固定）の枠を新形式に移行。完了状態は時刻で引き継ぐ */
+  E.migrateDrinks = (old, sched, prof) => {
+    const fresh = E.drinkSlots(sched, prof);
+    const doneTimes = (old || []).filter(d => d.done).map(d => d.time).sort();
+    let k = 0;
+    for (const f of fresh) if (k < doneTimes.length && f.time <= (doneTimes[doneTimes.length - 1] || '00:00')) { f.done = true; f.at = (old.find(d => d.done && d.time === doneTimes[k]) || {}).at || null; k++; }
+    return fresh;
+  };
+  /* 予定変更：今より前の枠と完了済みは残し、これからの枠だけ作り直す */
+  E.rebuildDrinks = (cur, sched, prof, now) => {
+    const keep = (cur || []).filter(d => d.done || d.time < now);
+    const fresh = E.drinkSlots(sched, prof).filter(d => d.time >= now && !keep.some(k => k.time === d.time && k.kind === d.kind));
+    return [...keep, ...fresh].sort((a, b) => a.time.localeCompare(b.time));
   };
   function addMin(hhmm, m){ const [h, mi] = hhmm.split(':').map(Number); let t = h*60 + mi + m; t = (t + 1440) % 1440; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; }
   E.addMin = addMin;
 
   /* カフェイン概算：コーヒー浸出液 60mg/100ml（日本食品標準成分表の値）、緑茶 20mg/100ml、烏龍茶 20mg/100ml */
   E.caffeinePer100 = { coffee:60, greentea:20, oolong:20, black:30 };
+  E.COFFEE_PRESETS = [ { label:'コーヒー マグ1杯', ml:200 }, { label:'缶コーヒー 185ml', ml:185 }, { label:'ボトルコーヒー 500ml', ml:500 }, { label:'エスプレッソ系 1杯', ml:60, mg:65 } ];
   E.caffeineEstimate = (kind, ml) => Math.round((E.caffeinePer100[kind] || 0) * ml / 100);
   E.caffeineAdvice = (totalMg, sleepTime) => {
     const now = new Date(); const [h, m] = (sleepTime || '23:30').split(':').map(Number);

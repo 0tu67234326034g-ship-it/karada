@@ -40,7 +40,9 @@
   async function loadState(){
     App.prof = await DB.get('profile', null);
     App.settings = await DB.get('settings', { locationOn:false, share:{ weight:false, photos:false, meals:false, progress:false }, notify:{} });
-    App.game = await DB.get('game', { xp:0, counts:{ meal:0, drink:0, weight:0, training:0, steps:0, snackLog:0, homeMeal:0, bodyPhoto:0 }, badges:[], activeDays:[] });
+    const g = await DB.get('game', {});
+    App.game = { xp:0, badges:[], activeDays:[], xpByDay:{}, dayPct:{}, bestStreak:0, bestRank:null, ...g,
+      counts:{ meal:0, drink:0, weight:0, training:0, steps:0, snackLog:0, homeMeal:0, bodyPhoto:0, ...(g.counts || {}) } };
   }
   const dayKey = d => 'day:' + d;
   async function getDay(d = E.today()){ return await DB.get(dayKey(d), { date:d, schedule:null, meals:{}, drinks:null, snacks:[], training:[], steps:null, caffeine:[], alcohol:[] }); }
@@ -48,30 +50,107 @@
   App.getDay = getDay;
 
   function targets(day){ const base = E.calcTargets(App.prof); return E.dayTargets(base, day?.schedule); }
-  async function recentIds(){
-    const ids = [];
-    for (let i = 1; i <= 7; i++) { const d = await DB.get(dayKey(E.addDays(E.today(), -i))); if (!d) continue; for (const m of Object.values(d.meals || {})) for (const it of (m.mission?.items || [])) ids.push(it.id); }
-    return ids;
+  /* 過去7日＋今日のほかの食事から、重複防止用の履歴を作る（クリアしたミッションを重視） */
+  async function buildHist(day, slot){
+    const days = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = await DB.get(dayKey(E.addDays(day.date, -i))); if (!d) continue;
+      for (const m of Object.values(d.meals || {})) if (m.mission?.items?.length && m.status === 'cleared') days.push({ ago:i, items:m.mission.items.filter(x => x.role !== 'drink'), chain: m.mission.chain });
+    }
+    for (const [s, m] of Object.entries(day.meals || {})) if (s !== slot && m.mission?.items?.length) days.push({ ago:0, items:m.mission.items.filter(x => x.role !== 'drink'), chain: m.mission.chain });
+    return E.makeHistory(days);
   }
   async function vendingList(){ return await DB.get('vending', []); }
   async function favList(){ return await DB.get('favorites', []); }
 
   /* ---------------- ゲーム ---------------- */
-  async function gain(kind, label){
-    const g = App.game; const before = E.level(g.xp).lv;
-    g.xp += E.XP[kind] || 0; g.counts[kind] = (g.counts[kind] || 0) + 1;
+  const nowHM = () => new Date().toTimeString().slice(0, 5);
+  async function scoreOfDate(date){
+    const d = await DB.get(dayKey(date)); if (!d) return null;
+    return G.dayScore(d, targets(d));
+  }
+  /* 行動に対してXPを付与し、その日のボーナス・連続・バッジを判定。体重の増減では評価しない */
+  async function award(kind, label, opts = {}){
+    const g = App.game; const before = G.level(g.xp).lv;
     const t = E.today();
+    const gained = [];
+    const add = (xp, lab, key) => { if (!xp) return; g.xp += xp; g.xpByDay[t] = (g.xpByDay[t] || 0) + xp; gained.push({ xp, label: lab, key }); };
+    const base = opts.xp ?? G.XP[kind] ?? 0;
+    g.counts[kind] = (g.counts[kind] || 0) + 1;
+    add(base, label, kind);
+    for (const b of (opts.bonus || [])) { g.counts[b] = (g.counts[b] || 0) + 1; add(G.BONUS[b].xp, G.BONUS[b].label, b); }
     if (!g.activeDays.includes(t)) {
       const last = g.activeDays[g.activeDays.length - 1];
       if (last && E.daysBetween(last, t) >= 3) g.comeback = true;
       g.activeDays.push(t); if (g.activeDays.length > 400) g.activeDays.shift();
     }
-    const newB = E.BADGES.filter(b => !g.badges.includes(b.id) && b.test(g));
+    // その日のボーナス判定
+    const day = await getDay(); day.flags = day.flags || {};
+    const tg = targets(day);
+    const sc = G.dayScore(day, tg);
+    g.dayPct[t] = sc.pct;
+    const once = (flag, key, cond) => { if (cond && !day.flags[flag]) { day.flags[flag] = true; g.counts[key] = (g.counts[key] || 0) + 1; add(G.BONUS[key].xp, G.BONUS[key].label, key); } };
+    once('perfect', 'perfect', sc.perfect);
+    const type = day.schedule?.type;
+    once('golfDay', 'golfDay', type === 'golf' && day.exerciseDone && sc.drinkDone >= 5);
+    once('softDay', 'softDay', type === 'softball' && day.exerciseDone && sc.drinkDone >= 3);
+    once('travelDay', 'travelDay', type === 'travel' && sc.mealsDone >= 2);
+    once('replanBack', 'replanBack', !!day.replanned && Object.values(day.meals).some(m => m.status === 'cleared' && m.clearedAt > day.replanned.at));
+    if (day.recovery) { const rp = G.recoveryProgress(day, tg); once('recovery', 'recovery', rp.water && rp.lunch && rp.move); }
+    // 連続達成
+    const pctOf = d => d === t ? sc.pct : (g.dayPct[d] ?? 0);
+    const st = G.streak(pctOf, t);
+    g.streak = st; g.bestStreak = Math.max(g.bestStreak || 0, st);
+    for (const n of [3, 7, 14, 30]) once('streak' + n, 'streak' + n, st >= n && sc.pct >= G.ACHIEVED);
+    // 週間ランク（最高記録）
+    const wk = G.weekRank([...Array(7)].map((_, i) => pctOf(E.addDays(t, -i))));
+    const order = ['D','C','B','A','S'];
+    if (!g.bestRank || order.indexOf(wk.r) > order.indexOf(g.bestRank)) g.bestRank = wk.r;
+    await saveDay(day);
+    const newB = G.BADGES.filter(b => !g.badges.includes(b.id) && b.test(g));
     newB.forEach(b => g.badges.push(b.id));
     await DB.set('game', g);
-    const after = E.level(g.xp).lv;
-    toast(`+${E.XP[kind] || 0}XP ${label || ''}` + (after > before ? `　🎉 レベル${after}！` : '') + (newB.length ? `　${newB.map(b => b.em + b.name).join(' ')}` : ''));
+    const lv = G.level(g.xp).lv;
+    const res = { gained, total: gained.reduce((a, x) => a + x.xp, 0), levelUp: lv > before ? lv : null, badges: newB, perfect: gained.some(x => x.key === 'perfect'), missing: sc.missing };
+    if (opts.silent) return res;
+    if (opts.big || res.levelUp || res.perfect || newB.length || gained.length > 1) await celebrate(res, opts);
+    else xpPop(res.total, label);
+    return res;
   }
+  const gain = (kind, label) => award(kind, label);
+
+  function xpPop(xp, label){
+    const el = document.createElement('div'); el.className = 'xppop';
+    el.innerHTML = `${xp ? `<b>+${xp} XP</b>` : ''}${label ? `<span>${esc(label)}</span>` : ''}`;
+    document.body.appendChild(el); setTimeout(() => el.remove(), 1500);
+  }
+  /* MISSION CLEAR 演出（タップ or 自動で閉じる） */
+  function celebrate(res, opts = {}){
+    return new Promise(resolve => {
+      const title = res.perfect ? 'PERFECT DAY' : opts.title || 'MISSION CLEAR';
+      const sub = res.perfect ? '今日の作戦完了！ 全ミッション達成' : opts.sub || '';
+      const theme = res.perfect ? 'perfect' : opts.theme || '';
+      const bg = document.createElement('div'); bg.className = 'fx ' + theme;
+      bg.innerHTML = `<div class="fx-card">
+        <div class="fx-burst"></div>
+        <div class="fx-title">${esc(title)}</div>${sub ? `<div class="fx-sub">${esc(sub)}</div>` : ''}
+        <div class="fx-xp">+<span id="fx-n">0</span> XP</div>
+        <div class="fx-list">${res.gained.map(x => `<div><span>${esc(x.label || '')}</span><b>+${x.xp}</b></div>`).join('')}</div>
+        ${res.levelUp ? `<div class="fx-lv">LEVEL UP!　Lv.${res.levelUp} ${esc(G.title(res.levelUp))}</div>` : ''}
+        ${res.badges.map(b => `<div class="fx-badge">${b.em} バッジ獲得：${esc(b.name)}</div>`).join('')}
+        ${!res.perfect && res.missing?.length === 1 ? `<div class="fx-next">あと1つで完全達成：${esc(res.missing[0])}</div>` : ''}
+        <div class="tiny" style="margin-top:10px">タップで閉じる</div></div>`;
+      document.body.appendChild(bg);
+      const n = bg.querySelector('#fx-n'); const T = res.total; const t0 = performance.now();
+      const step = now => { const k = Math.min(1, (now - t0) / 700); n.textContent = Math.round(T * (1 - (1 - k) ** 3)); if (k < 1) requestAnimationFrame(step); };
+      requestAnimationFrame(step);
+      let closed = false;
+      const close = () => { if (closed) return; closed = true; bg.classList.add('out'); setTimeout(() => { bg.remove(); resolve(); }, 220); };
+      bg.onclick = close;
+      setTimeout(close, res.perfect || res.levelUp || res.badges.length ? 3200 : 1700);
+    });
+  }
+  App.celebrate = celebrate;
 
   /* ---------------- 共通UI ---------------- */
   function toast(msg){ const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
@@ -112,7 +191,7 @@
       <div class="nut">${nut}</div><div style="margin-top:4px">${alg}</div>
       ${it.note ? `<div class="tiny" style="margin-top:4px">※${esc(it.note)}</div>` : ''}
       <div style="margin-top:6px">${it.officialUrl ? `<a class="tiny" href="${esc(it.officialUrl)}" target="_blank" rel="noopener">公式ページで写真を見る ›</a>` : ''}
-      ${opts.soldoutBtn ? `<button class="btn sm" data-soldout="${esc(it.id)}">売り切れ</button>` : ''}</div>
+      ${opts.soldoutBtn ? `<button class="btn sm" data-soldout="${esc(it.id)}">売り切れ</button>` : ''}${it.role !== 'drink' && it.id ? `<button class="btn sm star ${(App.prof?.favItems || []).includes(it.id) ? 'on' : ''}" data-fav="${esc(it.id)}">${(App.prof?.favItems || []).includes(it.id) ? '★ お気に入り' : '☆ お気に入り'}</button>` : ''}</div>
     </div>`;
   }
 
@@ -169,46 +248,195 @@
   }
 
   /* ================= ホーム（表メニュー） ================= */
+  /* ---------------- 場所・飲み物の共通処理 ---------------- */
+  /* 時間帯（朝 / 日中 / 夜）。手動で切り替えた場所は同じ時間帯の間だけ有効 */
+  const period = hm => hm < (App.settings.leaveTime || '08:30') ? 'am' : hm >= (App.settings.backTime || '19:00') ? 'night' : 'day';
+  function curPlace(day){
+    const p = App.settings.place;
+    if (p && p.date === E.today() && p.period === period(nowHM())) return p.id;
+    const base = day?.schedule?.place || E.defaultPlace(day?.schedule?.type);
+    if (base === 'office' && period(nowHM()) !== 'day') return 'home';   // 仕事の日：出勤前・帰宅後は自宅
+    return base;
+  }
+  async function setPlace(id){ App.settings.place = { id, date:E.today(), at:nowHM(), period: period(nowHM()) }; await DB.set('settings', App.settings); }
+  async function drinkCtx(day){
+    const vend = (await vendingList()).flatMap(v => v.items.map(i => ({ ...i, place:v.name })));
+    const caf = day.caffeine || [];
+    return { place: curPlace(day), vending: vend, coffeeCount: caf.filter(c => c.kind === 'coffee').length, caffeineMg: caf.reduce((a, c) => a + (c.mg || 0), 0), meals: day.meals, sched: day.schedule, now: nowHM() };
+  }
+  async function ensureDay(day){
+    let dirty = false;
+    if (!day.drinks) { day.drinks = E.drinkSlots(day.schedule, App.prof); dirty = true; }
+    else if (day.drinks.length && !day.drinks[0].v) { day.drinks = E.migrateDrinks(day.drinks, day.schedule, App.prof); dirty = true; }
+    if (day.recovery === undefined) {
+      const y = await DB.get(dayKey(E.addDays(day.date, -1)));
+      const yt = y ? targets(y) : null;
+      day.recovery = y ? G.recoveryFor(y, G.dayScore(y, yt), sumDay(y), yt?.kcal) : null;
+      dirty = true;
+    }
+    if (dirty) await saveDay(day);
+    return day;
+  }
+  /* 位置情報ONで自宅・会社の位置が登録済みなら、開いた時に1回だけ場所を自動判定（追跡はしない） */
+  async function autoPlace(){
+    const P = App.settings.places || {};
+    if (!App.settings.locationOn || !(P.home || P.office)) return;
+    const last = App.tmp.autoPlaceAt || 0; if (Date.now() - last < 20 * 60e3) return;
+    App.tmp.autoPlaceAt = Date.now();
+    try {
+      const pos = await S.locateOnce();
+      let best = null;
+      for (const k of ['home', 'office']) if (P[k]) { const m = S.dist(pos.lat, pos.lon, P[k].lat, P[k].lon); if (m < 250 && (!best || m < best.m)) best = { k, m }; }
+      const id = best ? best.k : 'out';
+      if (id !== curPlace(await getDay())) { await setPlace(id); xpPop(0, `現在地：${E.PLACES[id].label}に切り替えました`); if ((location.hash || '#home') === '#home') renderHome(); }
+    } catch {}
+  }
+  /* 前回の作戦（予定の種類ごとに記憶） */
+  function lastPlan(type){
+    const by = App.settings.planByType || {};
+    if (type) return by[type] || null;
+    return App.settings.lastPlan || null;
+  }
+  function planSummary(p){
+    if (!p) return '';
+    const L = { home:'家', 'conv:seven':'セブン', 'conv:lawson':'ローソン', 'conv:famima':'ファミマ', eatout:'外食', undecided:'後で決める', drinking:'飲み会', golf:'ゴルフ場', nearby:'近くで探す' };
+    return [`${E.SCHED[p.type]?.em || ''}${E.SCHED[p.type]?.label || ''}`, `朝:${L[p.breakfast] || '—'}`, `昼:${L[p.lunch] || '—'}${p.bulk ? '（朝まとめ買い）' : ''}`, `夜:${L[p.dinner] || '—'}`, p.exercise && p.exercise !== 'none' ? ({ training:'💪トレーニング', walk:'🚶ウォーキング' })[p.exercise] || '' : '', `${E.PLACES[p.place]?.em || ''}${E.PLACES[p.place]?.label || ''}`].filter(Boolean).join('・');
+  }
+
   async function renderHome(){
-    const day = await getDay();
+    let day = await ensureDay(await getDay());
     const t = targets(day);
-    const lv = E.level(App.game.xp);
-    if (!day.drinks) { day.drinks = E.drinkPlan(day.schedule, App.prof, await vendingList()); await saveDay(day); }
-    const slots = ['breakfast','lunch','dinner'];
-    const cleared = slots.filter(s => day.meals[s]?.status === 'cleared').length;
-    const drinksDone = day.drinks.filter(d => d.done).length;
+    const g = App.game;
+    const lv = G.level(g.xp);
+    const sc = G.dayScore(day, t);
     const eaten = sumDay(day);
-    const nextDrink = day.drinks.find(d => !d.done);
-    const tasks = [cleared/3, drinksDone/Math.max(1, day.drinks.length), day.weightLogged ? 1 : 0, (!t.steps || day.steps != null) ? 1 : 0];
-    const pct = Math.round(tasks.reduce((a,b) => a+b, 0) / tasks.length * 100);
-    const sched = day.schedule ? E.SCHED[day.schedule.type] : null;
-    const comeback = App.game.activeDays.length && E.daysBetween(App.game.activeDays[App.game.activeDays.length-1], E.today()) >= 2;
-    const mealState = s => { const m = day.meals[s]; if (m?.status === 'cleared') return '<span class="done">✓ クリア</span>'; if (m?.mission && !m.mission.error) return '<span style="color:var(--gold2)">発令中</span>'; const pl = day.schedule?.plan?.[s]; return pl === 'home' ? '家で記録' : pl === 'drinking' ? '飲み会' : '発行する'; };
+    const place = curPlace(day);
+    const dctx = await drinkCtx(day);
+    const due = day.drinks.filter(d => !d.done && d.time <= nowHM());
+    const nextDrink = due[due.length - 1] || day.drinks.find(d => !d.done);   // 今に一番近い指令を表示（過ぎた分は一覧から）
+    const overdue = Math.max(0, due.length - 1);
+    const slots = ['breakfast','lunch','dinner'];
+    const type = day.schedule?.type;
+    const wk = G.weekRank([...Array(7)].map((_, i) => { const d = E.addDays(E.today(), -i); return d === E.today() ? sc.pct : (g.dayPct[d] ?? 0); }));
+    const streak = G.streak(d => d === E.today() ? sc.pct : (g.dayPct[d] ?? 0), E.today());
+    const comeback = g.activeDays.length && E.daysBetween(g.activeDays[g.activeDays.length-1], E.today()) >= 2;
+    const lp = lastPlan();
+    const theme = type === 'golf' ? 'theme-golf' : type === 'travel' ? 'theme-travel' : type === 'softball' ? 'theme-golf' : '';
+    const mealState = s => {
+      const m = day.meals[s]; const pl = day.schedule?.plan?.[s];
+      if (m?.status === 'cleared') return '<span class="done">✓ CLEAR</span>';
+      if (m?.mission && !m.mission.error) return '<span class="hot">指令あり</span>';
+      return ({ home:'家ごはん', drinking:'飲み会', golf:'ゴルフ場', eatout:'外食', 'conv:seven':'セブン', 'conv:lawson':'ローソン', 'conv:famima':'ファミマ' })[pl] || '発動する';
+    };
+    const dow = new Date().getDay();
+    const weekend = dow === 0 || dow === 6;
+    const rp = day.recovery ? G.recoveryProgress(day, t) : null;
+    const coffeeBtns = place === 'office' && dctx.vending.some(v => v.caffeineMg)
+      ? dctx.vending.filter(v => v.caffeineMg).slice(0, 3).map((v, i) => `<button class="btn sm" data-vcoffee="${i}">☕ ${esc(v.name)}</button>`).join('')
+      : `<button class="btn sm" data-coffee="0">☕ コーヒー飲んだ</button>`;
     view(`
-      <div class="topbar"><div class="logo">からだミッション</div><div class="spacer"></div><button class="iconbtn" onclick="App.go('#ura')">裏</button></div>
+      <div class="topbar"><div class="logo">KARADA MISSION</div><div class="spacer"></div><button class="iconbtn" onclick="App.go('#log')">戦績</button><button class="iconbtn" onclick="App.go('#ura')">裏</button></div>
       ${storageNotice()}
-      <div class="lv"><div class="badge">${lv.lv}</div><div style="flex:1"><div class="small">レベル ${lv.lv}　${App.game.xp} XP　活動 ${App.game.activeDays.length}日</div><div class="bar"><i style="width:${lv.pct}%"></i></div></div></div>
-      ${comeback ? `<div class="okbox">おかえり！昨日までのことは気にしない。今日の1ミッションから再開しよう。</div>` : ''}
-      <div class="card gold" onclick="App.go('#morning')" style="cursor:pointer">
-        <div class="small">今日の予定</div>
-        ${sched ? `<h3>${sched.em} ${sched.label}${day.schedule.golf?.course ? '　' + esc(day.schedule.golf.course) : ''}</h3>` : `<h3>📋 予定を選べ！</h3><div class="small">仕事・ゴルフ・ソフトボール・休日・出張</div>`}
-        <div class="small">目標 ${t.kcal} kcal ／ 記録 ${Math.round(eaten.kcal)} kcal${eaten.unknown ? '＋不明' + eaten.unknown + '品' : ''} ／ たんぱく質 ${Math.round(eaten.protein)}/${t.protein}g</div>
-      </div>
-      <h2 style="margin-top:6px">食事ミッション</h2>
-      <div class="grid3">${slots.map(s => `<button class="tile" onclick="App.go('#meal/${s}')"><span class="em">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[s]}</span><b>${E.MEAL_LABEL[s]}</b><span class="small">${mealState(s)}</span></button>`).join('')}</div>
+      <div class="lv ${theme}" onclick="App.go('#log')"><div class="badge">${lv.lv}</div><div style="flex:1"><div class="small"><b style="color:var(--text)">${esc(G.title(lv.lv))}</b>　${g.xp} XP　次まで ${lv.toNext}</div><div class="bar"><i style="width:${lv.pct}%"></i></div>
+        <div class="tiny" style="margin-top:4px">🔥 連続 ${streak}日　🏅 今週 ${wk.r}ランク（${esc(wk.name)}）</div></div></div>
+      ${comeback ? `<div class="okbox">おかえり！ 昨日までのことは気にしない。今日の1ミッションから再開しよう。</div>` : ''}
+      ${!day.schedule ? `<div class="card gold brief"><div class="kicker">TODAY'S OPERATION</div><h3>📋 今日の作戦会議</h3>
+          ${lp ? `<div class="small">前回の作戦：${esc(planSummary(lp))}</div><button class="btn primary" id="h-same">前回と同じ作戦で開始！</button><button class="btn" onclick="App.go('#morning')">作戦を変えて開始</button>`
+               : `<div class="small">予定・食事・場所を1画面で決めて、今日の作戦を開始しよう。</div><button class="btn primary" onclick="App.go('#morning')">作戦会議を開く</button>`}</div>`
+        : `<div class="card ${theme ? theme + ' special' : 'gold'}" ><div class="row"><div style="flex:3" onclick="App.go('#morning')"><div class="kicker">${type === 'golf' ? 'ROUND DAY' : type === 'travel' ? 'AWAY MISSION' : type === 'softball' ? 'GAME DAY' : "TODAY'S OPERATION"}</div>
+          <h3>${E.SCHED[type].em} ${E.SCHED[type].label}${day.schedule.golf?.course ? '　' + esc(day.schedule.golf.course) : ''}</h3>
+          <div class="small">目標 ${t.kcal}kcal ／ 記録 ${Math.round(eaten.kcal)}kcal${eaten.unknown ? '＋不明' + eaten.unknown + '品' : ''} ／ たんぱく質 ${Math.round(eaten.protein)}/${t.protein}g</div></div>
+          <button class="btn sm" id="h-replan" style="flex:none">⚡ 予定が<br>変わった</button></div>
+          ${type === 'golf' || type === 'softball' ? `<hr><div class="small">${type === 'golf' ? '⛳ ラウンド完走ミッション：水分補給（茶店・持参の水）を続けて、最後まで回り切れ！' : '🥎 完走ミッション：こまめな水分・塩分補給で最後まで動き切れ！'}</div>${day.exerciseDone ? `<div class="done" style="margin-top:6px">✓ 完走！</div>` : `<button class="btn sm ok" id="h-ex">${type === 'golf' ? '🏌️ ラウンド完走！' : '🥎 完走した！'}</button>`}` : ''}
+          ${type === 'travel' ? `<hr><div class="small">🧳 遠征ミッション：駅や空港のコンビニ・近くの店からでも指令が出せる。2食クリアで遠征ボーナス！</div>` : ''}
+        </div>`}
+      ${rp && !day.flags?.recovery ? `<div class="card recovery"><div class="kicker">RECOVERY MISSION</div><b>${esc(day.recovery.reason)} 今日はリカバリー作戦。</b>
+          ${day.recovery.tasks.map(x => `<div class="li" style="padding:6px 0"><span class="t small">${rp[x.id] ? '✅' : '⬜'} ${esc(x.label)}</span></div>`).join('')}<div class="tiny">3つクリアでボーナス +${G.BONUS.recovery.xp}XP。減点はありません。</div></div>`
+        : day.flags?.recovery ? `<div class="okbox">🌅 リカバリー成功！ ちゃんと戻せた。</div>` : ''}
+      <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
+      <h2>本日の指令</h2>
+      <div class="grid3">${slots.map(s => `<button class="tile ${day.meals[s]?.status === 'cleared' ? 'cleared' : ''}" data-meal="${s}"><span class="em">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[s]}</span><b>${E.MEAL_LABEL[s]}</b><span class="small">${mealState(s)}</span></button>`).join('')}</div>
+      ${nextDrink ? (() => { const dt = E.drinkText(nextDrink, dctx); return `<div class="card drinkcard"><div class="kicker">💧 ${nextDrink.time} 飲み物ミッション</div><div class="row"><b style="flex:3">${esc(dt.text)}</b><button class="btn sm ok" style="flex:none" data-drink="${esc(nextDrink.id)}">飲んだ！</button></div>
+          <div style="margin-top:6px">${coffeeBtns}<button class="btn sm ghost" onclick="App.go('#drinks')">一覧${overdue ? `（未記録${overdue}）` : ''}</button></div></div>`; })() : `<div class="okbox">💧 今日の飲み物ミッションはすべて完了！</div>`}
       <div class="grid2" style="margin-top:10px">
         <button class="tile" onclick="App.go('#snack')"><span class="em">🆘</span><b>お助け間食</b><span class="small">気分で選ぶ</span></button>
-        <button class="tile" onclick="App.go('#train')"><span class="em">💪</span><b>トレーニング</b><span class="small">${day.training.length ? day.training.length + '回 完了' : '場所と時間で決める'}</span></button>
-        <button class="tile" onclick="App.go('#body')"><span class="em">⚖️</span><b>体重・歩数</b><span class="small">${day.weightLogged ? '記録済み' : '朝の計測'}</span></button>
+        <button class="tile" onclick="App.go('#train')"><span class="em">💪</span><b>トレーニング</b><span class="small">${day.training.length ? `<span class="done">✓ ${day.training.length}回</span>` : day.schedule?.exercise === 'training' ? '<span class="hot">本日の指令</span>' : lastTrainLabel()}</span></button>
+        <button class="tile" id="h-body"><span class="em">⚖️</span><b>体重・歩数</b><span class="small">${day.weightLogged ? '<span class="done">✓ 体重</span>' : '朝の計測'}${day.steps != null ? '・' + day.steps.toLocaleString() + '歩' : ''}</span></button>
         <button class="tile" onclick="App.go('#nearby')"><span class="em">📍</span><b>現在地から探す</b><span class="small">近くのお店</span></button>
       </div>
-      <div class="card" style="margin-top:12px"><div class="progress-wrap">${ring(pct)}<div style="flex:1"><b>今日の達成状況</b><div class="small">食事 ${cleared}/3・水分 ${drinksDone}/${day.drinks.length}・体重 ${day.weightLogged ? '✓' : '—'}${t.steps ? '・歩数 ' + (day.steps != null ? day.steps.toLocaleString() : '—') : '・運動日（歩数ミッションなし）'}</div></div></div>
-        ${nextDrink ? `<hr><div class="small">💧 ${nextDrink.time} の飲み物ミッション</div><div class="row" style="margin-top:4px"><b style="flex:3">${esc(nextDrink.text)}</b><button class="btn sm ok" style="flex:none" data-drink="${esc(nextDrink.id)}">飲んだ！</button></div><button class="btn sm ghost" onclick="App.go('#drinks')">飲み物ミッション一覧</button>` : `<hr><div class="small done">💧 今日の飲み物ミッションはすべて完了</div>`}
-      </div>
+      <div class="card" style="margin-top:12px" onclick="App.go('#log')"><div class="progress-wrap">${ring(sc.pct)}<div style="flex:1"><b>今日の達成状況</b>
+        <div class="small">食事 ${sc.mealsDone}/3・水分 ${sc.drinkDone}/${sc.drinkTotal}・体重 ${day.weightLogged ? '✓' : '—'}・${['golf','softball'].includes(type) ? '完走 ' + (day.exerciseDone ? '✓' : '—') : '歩く/運動 ' + (sc.parts.move >= 1 ? '✓' : day.steps != null ? Math.round(sc.parts.move * 100) + '%' : '—')}</div>
+        <div class="small" style="margin-top:4px">${sc.perfect ? '<b class="done">🌟 今日の作戦完了！ PERFECT DAY</b>' : sc.missing.length === 1 ? `<b class="hot">あと1つで完全達成：${esc(sc.missing[0])}</b>` : `完全達成まで あと${sc.missing.length}つ`}</div>
+        <div class="tiny" style="margin-top:2px">今日 +${g.xpByDay[E.today()] || 0}XP　7日間の戦績 ›</div></div></div></div>
+      ${weekend ? `<div class="card gold" onclick="App.go('#log')"><div class="kicker">WEEKEND REPORT</div><b>週末の戦績：${wk.r}ランク（${esc(wk.name)}）</b><div class="small">${esc(G.weekComments(await weekRows()).join(' '))}</div><div class="tiny">詳しく見る ›</div></div>` : ''}
     `);
     document.querySelectorAll('[data-dismiss-notice]').forEach(b => b.onclick = async () => { App.settings.storageNoticeSeen = true; await DB.set('settings', App.settings); renderHome(); });
+    document.querySelectorAll('[data-place]').forEach(b => b.onclick = async () => { await setPlace(b.dataset.place); renderHome(); });
+    const same = $('#h-same'); if (same) same.onclick = () => startPlan({ ...lp });
+    const rpb = $('#h-replan'); if (rpb) rpb.onclick = () => replanSheet();
+    const ex = $('#h-ex'); if (ex) ex.onclick = async () => { const d = await getDay(); d.exerciseDone = true; await saveDay(d); await award('training', type === 'golf' ? 'ラウンド完走' : '完走', { xp:30, big:true, title: type === 'golf' ? 'ROUND COMPLETE' : 'GAME COMPLETE', theme:'golf' }); renderHome(); };
+    $('#h-body').onclick = () => quickBody();
+    document.querySelectorAll('[data-meal]').forEach(b => b.onclick = () => {
+      const s = b.dataset.meal; const m = day.meals[s];
+      // 家ごはんの予定でまだ記録していない時は、タイルから直接カメラを起動（画面遷移なし）
+      if (day.schedule?.plan?.[s] === 'home' && !m) {
+        const p = pickPhoto();
+        return p.then(async blob => { if (!blob) return; await recordHomeMeal(s, blob, ''); });
+      }
+      go('#meal/' + s);
+    });
+    document.querySelectorAll('[data-coffee]').forEach(b => b.onclick = () => coffeeSheet());
+    document.querySelectorAll('[data-vcoffee]').forEach(b => b.onclick = async () => { const v = dctx.vending.filter(x => x.caffeineMg)[+b.dataset.vcoffee]; await logCoffee(v.name + (v.size ? ' ' + v.size : ''), v.caffeineMg); renderHome(); });
     bindDrinkButtons();
     remindCheck(day);
+    autoPlace();
+  }
+  function lastTrainLabel(){ const o = App.settings.lastTrain; return o ? `前回：${({home:'自宅',office:'会社',gym:'ジム',outdoor:'屋外'})[o.place]}${o.min}分` : '場所と時間で決める'; }
+  async function logCoffee(name, mg){
+    const d = await getDay(); d.caffeine = d.caffeine || [];
+    const kind = /コーヒー|珈琲|ブラック|カフェ|エスプレッソ|BOSS|ジョージア|ワンダ|ルーツ/i.test(name) ? 'coffee' : 'tea';
+    d.caffeine.push({ name, mg, kind, at: nowHM() }); await saveDay(d);
+    const total = d.caffeine.reduce((a, c) => a + (c.mg || 0), 0);
+    const adv = E.caffeineAdvice(total, App.prof.sleep);
+    xpPop(0, `☕ ${name}（約${mg}mg）記録。今日 約${total}mg`);
+    if (adv.length) setTimeout(() => toast(adv[0]), 900);
+  }
+  function coffeeSheet(){
+    sheet(`<h2>☕ コーヒーを記録</h2><div class="small">ワンタップで記録。カフェインは日本食品標準成分表（コーヒー浸出液 60mg/100ml）からの概算です。</div>
+      <div class="list card">${E.COFFEE_PRESETS.map((c, i) => `<div class="li" data-cf="${i}"><span class="t">${c.label}</span><span class="small">約${c.mg ?? E.caffeineEstimate('coffee', c.ml)}mg ›</span></div>`).join('')}</div>`, bg => {
+      bg.querySelectorAll('[data-cf]').forEach(el => el.onclick = async () => { const c = E.COFFEE_PRESETS[+el.dataset.cf]; bg.remove(); await logCoffee(c.label, c.mg ?? E.caffeineEstimate('coffee', c.ml)); route(); });
+    });
+  }
+  /* 体重・歩数をホームから直接（画面遷移なし） */
+  async function quickBody(){
+    const ws = await DB.get('weights', []); const day = await getDay();
+    const today = ws.find(w => w.date === day.date); const last = [...ws].sort((a, b) => b.date.localeCompare(a.date))[0];
+    let kg = today?.kg ?? last?.kg ?? App.prof.weightKg;
+    sheet(`<h2>⚖️ 体重・歩数</h2>
+      <div class="card"><b>今朝の体重</b>${today ? '<span class="pill ok">記録済み・修正できます</span>' : ''}
+        <div class="stepper"><button class="btn sm" data-kg="-0.1">−</button><input id="qb-kg" type="number" step="0.1" inputmode="decimal" value="${kg}"><button class="btn sm" data-kg="0.1">＋</button></div>
+        <div class="row"><button class="btn primary" id="qb-save">この体重で記録</button></div>
+        <button class="btn" id="qb-photo">📷 体重計を撮って読み取る</button></div>
+      <div class="card"><b>今日の歩数</b><div class="row"><input id="qb-st" type="number" inputmode="numeric" placeholder="例 8000" value="${day.steps ?? ''}"><button class="btn sm" id="qb-stsave" style="flex:none">記録</button></div></div>
+      <button class="btn ghost" onclick="this.closest('.sheet-bg').remove();App.go('#body')">グラフ・全身写真 ›</button>`, bg => {
+      const inp = bg.querySelector('#qb-kg');
+      bg.querySelectorAll('[data-kg]').forEach(b => b.onclick = () => { inp.value = (Math.round((+inp.value + +b.dataset.kg) * 10) / 10).toFixed(1); });
+      bg.querySelector('#qb-save').onclick = async () => { const v = +inp.value; if (!(v > 20 && v < 300)) return toast('体重を確認してください'); bg.remove(); await saveWeight(v); route(); };
+      bg.querySelector('#qb-photo').onclick = () => { bg.remove(); App.tmp.bodyPhoto = true; go('#body'); };
+      bg.querySelector('#qb-stsave').onclick = async () => { const v = Math.round(+bg.querySelector('#qb-st').value); if (!(v >= 0)) return; bg.remove(); await saveSteps(v); route(); };
+    });
+  }
+  async function saveWeight(kg, photoId){
+    const list = await DB.get('weights', []); const t = E.today(); const i = list.findIndex(w => w.date === t);
+    const rec = { date:t, kg, ...(photoId ? { photoId } : {}) };
+    if (i >= 0) list[i] = { ...list[i], ...rec }; else list.push(rec);
+    await DB.set('weights', list);
+    const d = await getDay(); const first = !d.weightLogged; d.weightLogged = true; await saveDay(d);
+    if (first) await award('weight', '体重を記録'); else toast('体重を更新しました');
+  }
+  async function saveSteps(v){
+    const d = await getDay(); const first = d.steps == null; d.steps = v; await saveDay(d);
+    if (first) await award('steps', '歩数を記録'); else { await award('check', '', { xp:0, silent:true }); toast('歩数を更新しました'); }
   }
   /* Safari と ホーム画面アプリでは保存場所が別になる案内 */
   const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -218,11 +446,14 @@
     return `<div class="warnbox"><b>Safariで開いています。</b>iPhoneでは、Safariとホーム画面に追加したアプリで保存データが別になります。毎日使う前に、共有ボタン →「ホーム画面に追加」から起動してください。Safariで記録したデータは「裏 → バックアップ」で書き出し、アプリ側で復元できます。</div>`;
   }
   function ring(p){ const r = 36, c = 2*Math.PI*r; return `<svg class="ring" viewBox="0 0 84 84"><circle cx="42" cy="42" r="${r}" fill="none" stroke="#2a3042" stroke-width="8"/><circle cx="42" cy="42" r="${r}" fill="none" stroke="url(#g)" stroke-width="8" stroke-linecap="round" stroke-dasharray="${c*p/100} ${c}" transform="rotate(-90 42 42)"/><defs><linearGradient id="g"><stop offset="0" stop-color="#d9b46a"/><stop offset="1" stop-color="#f1d9a2"/></linearGradient></defs><text x="42" y="47" text-anchor="middle" fill="#eef0f5" font-size="17" font-weight="800">${p}%</text></svg>`; }
-  function sumDay(day){ const s = { kcal:0, protein:0, unknown:0 }; for (const m of Object.values(day.meals)) if (m.status === 'cleared' && m.mission?.sum) { s.kcal += m.mission.sum.kcal || 0; s.protein += m.mission.sum.protein || 0; s.unknown += m.mission.sum.unknown || 0; } for (const sn of day.snacks) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; } return s; }
+  function sumDay(day){ const s = { kcal:0, protein:0, unknown:0 }; for (const m of Object.values(day.meals || {})) if (m.status === 'cleared' && m.mission?.sum) { s.kcal += m.mission.sum.kcal || 0; s.protein += m.mission.sum.protein || 0; s.unknown += m.mission.sum.unknown || 0; } else if (m.status === 'cleared') s.unknown++; for (const sn of (day.snacks || [])) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; } s.complete = s.unknown === 0 && s.kcal > 0; return s; }
   function bindDrinkButtons(){
     document.querySelectorAll('[data-drink]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
       const day = await getDay(); const d = day.drinks.find(x => x.id === b.dataset.drink); if (!d || d.done) return;
-      d.done = true; d.at = new Date().toTimeString().slice(0,5); await saveDay(day); await gain('drink', '水分補給');
+      const said = E.drinkText(d, await drinkCtx(day)).text;
+      d.done = true; d.at = nowHM(); d.said = said; d.place = curPlace(day); await saveDay(day);
+      await award('drink', '水分補給');
       route();
     });
   }
@@ -233,62 +464,212 @@
     clearInterval(remindTimer);
     const nf = App.settings.notify || {};
     const tick = async () => {
-      const d = await getDay(); const now = new Date().toTimeString().slice(0,5);
+      const d = await getDay(); const now = nowHM();
       const sent = App.tmp.sent || (App.tmp.sent = {});
       const fire = (k, title, body) => { if (sent[k]) return; sent[k] = 1; S.notify(title, body); };
-      if (nf.drink) { const dr = d.drinks?.find(x => !x.done && x.time <= now); if (dr) fire('dr' + dr.id, '飲み物ミッション', dr.text); }
-      if (nf.weight && !d.weightLogged && now >= (App.prof.wake || '07:00')) fire('w' + d.date, '体重ミッション', '体重計に乗って写真を撮れ！');
-      if (nf.lunch && d.meals.lunch?.status !== 'cleared' && now >= (nf.lunchTime || '12:00')) fire('l' + d.date, '昼食ミッション', '昼食ミッションを発行しろ！');
-      if (nf.dinner && d.meals.dinner?.status !== 'cleared' && now >= (nf.dinnerTime || '19:00')) fire('d' + d.date, '夕食ミッション', '夕食を記録しろ！');
+      if (nf.drink && d.drinks) { const dr = d.drinks.find(x => !x.done && x.time <= now); if (dr) fire('dr' + dr.id, '飲み物ミッション', E.drinkText(dr, await drinkCtx(d)).text); }
+      if (nf.weight && !d.weightLogged && now >= (App.prof.wake || '07:00')) fire('w' + d.date, '本日の指令', '体重計に乗って記録しろ！');
+      if (nf.lunch && d.meals.lunch?.status !== 'cleared' && now >= (nf.lunchTime || '12:00')) fire('l' + d.date, '昼食ミッション', '昼食ミッション発動！');
+      if (nf.dinner && d.meals.dinner?.status !== 'cleared' && now >= (nf.dinnerTime || '19:00')) fire('d' + d.date, '夕食ミッション', '夕食を撮影してミッションクリア！');
     };
     tick(); remindTimer = setInterval(tick, 60000);
   }
 
-  /* ================= 朝のミッション（予定選択） ================= */
+  /* 7日間の行（戦績・コメント用） */
+  async function weekRows(){
+    const rows = [];
+    const ws = await DB.get('weights', []);
+    for (let i = 6; i >= 0; i--) {
+      const date = E.addDays(E.today(), -i);
+      const d = await DB.get(dayKey(date));
+      const t = d ? targets(d) : null;
+      const score = d ? G.dayScore(d, t) : G.dayScore(null);
+      const foods = d ? ['breakfast','lunch','dinner'].map(s => { const m = d.meals?.[s]; if (!m || m.status !== 'cleared') return null;
+        if (m.homeRecord) return { s, txt: '家ごはん' + (m.dishes ? '（' + m.dishes.slice(0, 2).join('・') + '）' : m.memo ? '（' + m.memo.slice(0, 12) + '）' : '') };
+        if (m.mission?.items?.length) return { s, txt: (m.mission.storeName ? E.shortStore(m.mission.storeName) + '：' : '') + m.mission.items.filter(x => x.role !== 'drink').map(x => x.name).join('・') };
+        return { s, txt: m.mission?.storeName || '記録' }; }).filter(Boolean) : [];
+      rows.push({ date, d, score, foods, weight: ws.find(w => w.date === date)?.kg ?? null, steps: d?.steps ?? null, training: (d?.training || []).length,
+        eatout: !!d && Object.values(d.meals || {}).some(m => m.source?.type === 'chain' || m.source?.type === 'manual'), drinking: !!d && ((d.alcohol || []).length > 0 || d.schedule?.plan?.dinner === 'drinking'),
+        recovered: !!d?.flags?.recovery, replanBack: !!d?.flags?.replanBack, perfect: !!d?.flags?.perfect, xp: App.game.xpByDay[date] || 0, type: d?.schedule?.type });
+    }
+    return rows;
+  }
+
+  /* ================= 朝の作戦会議（1画面で確認 → 今日の作戦を開始！） ================= */
+  const CH = {
+    breakfast: [['home','🏠 家で食べる'],['conv:seven','セブン'],['conv:lawson','ローソン'],['conv:famima','ファミマ'],['undecided','後で決める']],
+    lunch: [['conv:seven','セブン'],['conv:lawson','ローソン'],['conv:famima','ファミマ'],['eatout','🍽 外食'],['home','🏠 家'],['undecided','後で決める']],
+    dinner: [['home','🏠 家ごはん'],['drinking','🍻 飲み会'],['eatout','🍽 外食'],['conv:seven','セブン'],['conv:lawson','ローソン'],['conv:famima','ファミマ'],['undecided','後で決める']],
+    exercise: [['none','なし'],['training','💪 トレーニング'],['walk','🚶 ウォーキング']]
+  };
+  function defaultPlanFor(type){
+    const base = { type, breakfast:'home', lunch: type === 'holiday' ? 'home' : 'conv:seven', dinner:'home', exercise:'none', place:E.defaultPlace(type), bulk:false };
+    if (type === 'golf') { base.lunch = 'golf'; base.breakfast = 'conv:seven'; }
+    if (type === 'travel') { base.lunch = 'undecided'; base.dinner = 'undecided'; }
+    return base;
+  }
   async function renderMorning(){
     const day = await getDay();
-    const sc = day.schedule || { type:null, plan:{} };
-    const stores = [['conv:seven','セブン'],['conv:lawson','ローソン'],['conv:famima','ファミマ'],['chain','チェーン店'],['nearby','近くで探す'],['undecided','食べる時に決める']];
-    const plan = sc.plan || {};
-    view(`${back()}<h1>今日の予定を選べ！</h1>
-      <div class="chips" id="m-type">${Object.entries(E.SCHED).map(([k,v]) => `<span class="chip ${sc.type===k?'on':''}" data-t="${k}">${v.em} ${v.label}</span>`).join('')}</div>
-      <div id="m-extra"></div>
-      <h2>朝食・昼食の買い方</h2>
-      <div class="card">
-        <div class="chips" id="m-bulk"><span class="chip ${plan.bulk?'on':''}" data-b="1">朝にまとめ買い</span><span class="chip ${!plan.bulk?'on':''}" data-b="0">別々に買う</span></div>
-        <label>朝食の店</label><select id="m-bf">${stores.map(([v,l]) => `<option value="${v}" ${plan.breakfast===v?'selected':''}>${l}</option>`).join('')}<option value="home" ${plan.breakfast==='home'?'selected':''}>自宅で食べる（記録のみ）</option></select>
-        <label>昼食の店</label><select id="m-lu">${stores.map(([v,l]) => `<option value="${v}" ${plan.lunch===v?'selected':''}>${l}</option>`).join('')}</select>
-        <label>夕食</label><select id="m-di"><option value="home" ${plan.dinner==='home'?'selected':''}>自宅（家族の料理を撮影して記録）</option><option value="drinking" ${plan.dinner==='drinking'?'selected':''}>飲み会</option>${stores.map(([v,l]) => `<option value="${v}" ${plan.dinner===v?'selected':''}>${l}</option>`).join('')}</select>
-        <p class="tiny">決まっていなくてもOK。食べるタイミングで食事ミッションを発行できます。</p>
-      </div>`,
-      `<button class="btn primary" id="m-go">ミッション発令！</button>`);
-    let type = sc.type;
-    const extra = () => {
-      const g = sc.golf || {}, s = sc.softball || {};
-      $('#m-extra').innerHTML = type === 'golf' ? `<div class="card"><label>ゴルフ場名</label><input id="g-c" value="${esc(g.course||'')}"><label>スタート時間</label><input id="g-s" type="time" value="${esc(g.start||'08:30')}"><p class="tiny">昼食はゴルフ場のメニューを撮影すると、AIが具体的に指定します。</p></div>`
-        : type === 'softball' ? `<div class="card"><div class="row"><div><label>開始</label><input id="sb-s" type="time" value="${esc(s.start||'09:00')}"></div><div><label>終了</label><input id="sb-e" type="time" value="${esc(s.end||'12:00')}"></div></div><label>内容</label><select id="sb-i"><option value="game" ${s.intensity!=='practice'?'selected':''}>試合</option><option value="practice" ${s.intensity==='practice'?'selected':''}>練習</option></select><label>予想最高気温(℃)</label><input id="sb-t" type="number" inputmode="numeric" value="${esc(s.temp||'')}"></div>` : '';
+    const cur = day.schedule ? { ...day.schedule.plan, type:day.schedule.type, place:day.schedule.place, exercise:day.schedule.exercise, golf:day.schedule.golf, softball:day.schedule.softball } : null;
+    let p = cur || { ...(lastPlan() || defaultPlanFor('work')) };
+    const draw = () => {
+      const chips = (k, opts) => `<div class="chips" data-k="${k}">${opts.map(([v, l]) => `<span class="chip ${p[k] === v ? 'on' : ''}" data-v="${v}">${l}</span>`).join('')}</div>`;
+      const lunchOpts = p.type === 'golf' ? [['golf','⛳ ゴルフ場'], ...CH.lunch] : CH.lunch;
+      const canBulk = p.breakfast?.startsWith('conv:') && p.lunch?.startsWith('conv:');
+      const g = p.golf || {}, sb = p.softball || {};
+      view(`${back()}<div class="kicker" style="margin-top:6px">BRIEFING</div><h1>今日の作戦会議</h1>
+        ${day.schedule ? `<div class="okbox">作戦は開始済みです。変更すると、まだクリアしていないミッションだけ組み直します。</div>` : ''}
+        <div class="card"><b>今日の予定</b>${chips('type', Object.entries(E.SCHED).map(([k, v]) => [k, v.em + ' ' + v.label]))}
+          ${p.type === 'golf' ? `<div class="row"><div><label>ゴルフ場</label><input id="b-gc" value="${esc(g.course || '')}" placeholder="例：○○CC"></div><div><label>スタート</label><input id="b-gs" type="time" value="${esc(g.start || '08:30')}"></div><div><label>最高気温</label><input id="b-gt" type="number" inputmode="numeric" value="${esc(g.temp || '')}" placeholder="℃"></div></div>` : ''}
+          ${p.type === 'softball' ? `<div class="row"><div><label>開始</label><input id="b-ss" type="time" value="${esc(sb.start || '09:00')}"></div><div><label>終了</label><input id="b-se" type="time" value="${esc(sb.end || '12:00')}"></div><div><label>最高気温</label><input id="b-st" type="number" inputmode="numeric" value="${esc(sb.temp || '')}" placeholder="℃"></div></div><label>内容</label><select id="b-si"><option value="game" ${sb.intensity !== 'practice' ? 'selected' : ''}>試合</option><option value="practice" ${sb.intensity === 'practice' ? 'selected' : ''}>練習</option></select>` : ''}
+        </div>
+        <div class="card"><b>朝食</b>${chips('breakfast', CH.breakfast)}
+          <b style="display:block;margin-top:10px">昼食</b>${chips('lunch', lunchOpts)}
+          ${canBulk ? `<div style="margin-top:8px">${chips('bulk', [[true,'🛒 朝に昼食まで買う'],[false,'別々に買う']])}</div>${p.bulk ? `<div class="tiny">朝食の店で昼食もまとめて買います。</div>` : ''}` : ''}
+          <b style="display:block;margin-top:10px">夕食・飲み会予定</b>${chips('dinner', CH.dinner)}</div>
+        <div class="card"><b>運動予定</b>${['golf','softball'].includes(p.type) ? `<div class="small" style="margin-top:6px">${E.SCHED[p.type].em} ${E.SCHED[p.type].label}が今日の運動（歩数ミッションはお休み）</div>` : chips('exercise', CH.exercise)}
+          <b style="display:block;margin-top:10px">今日の基本の場所</b>${chips('place', Object.entries(E.PLACES).map(([k, v]) => [k, v.em + ' ' + v.label]))}<div class="tiny">ホーム画面でいつでも1タップで切り替えられます。${p.place === 'office' ? `会社の日は ${esc(App.settings.leaveTime || '08:30')} 前と ${esc(App.settings.backTime || '19:00')} 以降は自動で「自宅」扱い。` : ''}</div>
+          ${p.place === 'office' ? `<div class="row"><div><label>家を出る</label><input id="b-lv" type="time" value="${esc(App.settings.leaveTime || '08:30')}"></div><div><label>帰宅</label><input id="b-bk" type="time" value="${esc(App.settings.backTime || '19:00')}"></div></div>` : ''}</div>
+        <div class="card gold"><div class="kicker">TODAY'S PLAN</div><div class="small">${esc(planSummary(p))}</div></div>`,
+        `<button class="btn primary" id="b-go">${day.schedule ? '作戦を更新！' : '今日の作戦を開始！'}</button>`);
+      document.querySelectorAll('[data-k]').forEach(el => el.onclick = e => {
+        const c = e.target.closest('.chip'); if (!c) return; readInputs();
+        const k = el.dataset.k; let v = c.dataset.v; if (v === 'true') v = true; if (v === 'false') v = false;
+        if (k === 'type' && v !== p.type) {
+          const remembered = lastPlan(v);
+          p = remembered ? { ...remembered } : defaultPlanFor(v);
+        } else p[k] = v;
+        if (k === 'breakfast' || k === 'lunch') { if (!(p.breakfast?.startsWith('conv:') && p.lunch?.startsWith('conv:'))) p.bulk = false; }
+        if (k === 'bulk' && v) p.lunch = p.breakfast;
+        if (k === 'lunch' && p.bulk) p.bulk = p.lunch === p.breakfast;
+        draw();
+      });
+      $('#b-go').onclick = () => { readInputs(); startPlan(p); };
     };
-    extra();
-    $('#m-type').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; type = c.dataset.t; document.querySelectorAll('#m-type .chip').forEach(x => x.classList.toggle('on', x === c)); extra(); };
-    $('#m-bulk').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; document.querySelectorAll('#m-bulk .chip').forEach(x => x.classList.toggle('on', x === c)); };
-    $('#m-go').onclick = async () => {
-      if (!type) return toast('予定を選んでください');
-      const ns = { type, plan:{ bulk: $('#m-bulk .chip.on')?.dataset.b === '1', breakfast:$('#m-bf').value, lunch:$('#m-lu').value, dinner:$('#m-di').value } };
-      if (type === 'golf') ns.golf = { course:$('#g-c').value, start:$('#g-s').value };
-      if (type === 'softball') ns.softball = { start:$('#sb-s').value, end:$('#sb-e').value, intensity:$('#sb-i').value, temp:$('#sb-t').value };
-      if (type === 'golf') { ns.plan.lunch = 'golf'; }
-      day.schedule = ns;
-      const doneDr = (day.drinks || []).filter(d => d.done);
-      day.drinks = [...doneDr, ...E.drinkPlan(ns, App.prof, await vendingList()).filter(d => !doneDr.some(x => x.text === d.text))].sort((a, b) => a.time.localeCompare(b.time));
-      // まとめ買い：朝食・昼食を同じ店で同時に発行
-      if (ns.plan.bulk && ns.plan.breakfast.startsWith('conv:')) {
-        for (const slot of ['breakfast', 'lunch']) { if (slot === 'lunch' && type === 'golf') continue; await issueConv(day, slot, ns.plan.breakfast.slice(5), {}); }
-        day.meals.lunch && (day.meals.lunch.bulk = true); day.meals.breakfast && (day.meals.breakfast.bulk = true);
-      }
-      await saveDay(day);
-      toast('今日のミッションを発令しました');
-      go(ns.plan.bulk ? '#bulk' : '#home');
+    const readInputs = () => {
+      if ($('#b-gc')) p.golf = { course:$('#b-gc').value, start:$('#b-gs').value, temp:$('#b-gt').value };
+      if ($('#b-ss')) p.softball = { start:$('#b-ss').value, end:$('#b-se').value, temp:$('#b-st').value, intensity:$('#b-si').value };
+      if ($('#b-lv')) { App.settings.leaveTime = $('#b-lv').value || '08:30'; App.settings.backTime = $('#b-bk').value || '19:00'; }
     };
+    draw();
+  }
+  /* 作戦開始（既に開始済みなら、クリア済みは残して残りだけ組み直し） */
+  async function startPlan(p){
+    const day = await getDay();
+    const restart = !!day.schedule;
+    const now = nowHM();
+    if (p.type === 'golf' && !p.lunch) p.lunch = 'golf';
+    const ns = { type:p.type, place:p.place || E.defaultPlace(p.type), exercise: ['golf','softball'].includes(p.type) ? p.type : (p.exercise || 'none'),
+      plan:{ bulk:!!p.bulk, breakfast:p.breakfast, lunch:p.lunch, dinner:p.dinner }, golf:p.golf, softball:p.softball };
+    // 変わった食事だけミッションを外す（クリア済みは残す）
+    const prev = day.schedule?.plan || {};
+    for (const s of ['breakfast','lunch','dinner']) {
+      const m = day.meals[s];
+      if (m && m.status !== 'cleared' && prev[s] !== ns.plan[s]) delete day.meals[s];
+    }
+    day.schedule = ns;
+    day.drinks = restart ? E.rebuildDrinks(day.drinks, ns, App.prof, now) : E.drinkSlots(ns, App.prof).map(d => ({ ...d }));
+    if (ns.plan.bulk && ns.plan.breakfast.startsWith('conv:')) {
+      for (const slot of ['breakfast', 'lunch']) if (day.meals[slot]?.status !== 'cleared') { await issueConv(day, slot, ns.plan.breakfast.slice(5), {}); day.meals[slot].bulk = true; }
+    } else if (ns.plan.breakfast?.startsWith('conv:') && !day.meals.breakfast) await issueConv(day, 'breakfast', ns.plan.breakfast.slice(5), {});
+    if (restart) day.replanned = { at: new Date().toISOString(), kind:'edit' };
+    await saveDay(day);
+    // 前回の作戦として記憶（予定の種類ごと）
+    const mem = { type:p.type, breakfast:p.breakfast, lunch:p.lunch, dinner:p.dinner, exercise:p.exercise, place:ns.place, bulk:!!p.bulk, golf:p.golf, softball:p.softball };
+    App.settings.lastPlan = mem; App.settings.planByType = { ...(App.settings.planByType || {}), [p.type]: mem };
+    await DB.set('settings', App.settings);
+    if (!restart) await award('planStart', '作戦開始', { xp: G.BONUS.planStart.xp, big:true, title:'OPERATION START', sub: p.type === 'golf' ? '⛳ ラウンドデー！ 水分補給を忘れずに' : p.type === 'travel' ? '🧳 遠征ミッション開始！' : p.type === 'softball' ? '🥎 ゲームデー！ こまめに補給' : '今日の作戦を開始！', theme: ['golf','softball'].includes(p.type) ? 'golf' : p.type === 'travel' ? 'travel' : '' });
+    else toast('残りのミッションを組み直しました');
+    go(ns.plan.bulk && !restart ? '#bulk' : '#home');
+  }
+
+  /* 途中の予定変更：今の時点から残りだけ再構成 */
+  function nextSlot(day){
+    const now = nowHM();
+    const open = ['breakfast','lunch','dinner'].filter(s => day.meals[s]?.status !== 'cleared');
+    if (now >= '15:00') return open.includes('dinner') ? 'dinner' : open[0];
+    if (now >= '10:30') return open.includes('lunch') ? 'lunch' : open.find(s => s !== 'breakfast') || open[0];
+    return open[0];
+  }
+  function replanSheet(){
+    sheet(`<h2>⚡ 予定が変わった</h2><p class="small">1日を作り直さず、今から残りのミッションだけ組み直します。クリア済みはそのまま。</p>
+      <div class="list card">
+        <div class="li" data-rp="drinking"><span class="t">🍻 急に飲み会になった</span>›</div>
+        <div class="li" data-rp="client"><span class="t">🤝 取引先と外食になった</span>›</div>
+        <div class="li" data-rp="trip"><span class="t">🧳 出張になった</span>›</div>
+        <div class="li" data-rp="forgot"><span class="t">🛒 昼食を買い忘れた</span>›</div>
+        <div class="li" data-rp="rainout"><span class="t">☔ ゴルフ・試合が中止になった</span>›</div>
+        <div class="li" data-rp="homedinner"><span class="t">🏠 夕食は家で食べることになった</span>›</div>
+        <div class="li" data-rp="edit"><span class="t">📋 その他（作戦会議で変更）</span>›</div>
+      </div>`, bg => bg.querySelectorAll('[data-rp]').forEach(el => el.onclick = () => { bg.remove(); replan(el.dataset.rp); }));
+  }
+  async function replan(kind){
+    if (kind === 'edit') return go('#morning');
+    const day = await getDay(); const now = nowHM();
+    if (!day.schedule) { day.schedule = { type:'work', place:curPlace(day), exercise:'none', plan:{ breakfast:'undecided', lunch:'undecided', dinner:'home' } }; }
+    const sc = day.schedule; const plan = sc.plan;
+    const open = s => day.meals[s]?.status !== 'cleared';
+    const drop = s => { if (open(s)) delete day.meals[s]; };
+    let goTo = '#home', msg = '';
+    if (kind === 'drinking') {
+      if (open('dinner')) { plan.dinner = 'drinking'; drop('dinner'); }
+      if (open('lunch') && day.meals.lunch?.source?.type === 'conv') { day.meals.lunch.rerollCount = (day.meals.lunch.rerollCount || 0) + 1; await issueConv(day, 'lunch', day.meals.lunch.source.id, { lighter:true }); day.meals.lunch.mission.tip = '夜は飲み会。昼は少し軽めにした。'; }
+      msg = '夕食を飲み会ミッションに切り替えました';
+    } else if (kind === 'client') {
+      const s = nextSlot(day); if (!s) return toast('残りの食事はありません');
+      plan[s] = 'eatout'; drop(s);
+      const m = day.meals[s] = { status:'pending', moodRerolls:0, rerollCount:0, soldout:[], source:{ type:'manual', name:'取引先との外食' } };
+      m.mission = { kind:'guide', storeName:'取引先との外食', meal:s, cmd:'取引先との外食：会話を楽しみつつ、焼き魚・焼き鳥・サラダ・刺身を中心に。ご飯と揚げ物は控えめに！', guide:'メニューが見られればAIに選ばせることもできます（撮影はタイミングが合う時だけでOK）。', needsPhoto:true, drinkLine:'お店の水かお茶（お酒は1〜2杯まで）' };
+      goTo = '#meal/' + s; msg = `${E.MEAL_LABEL[s]}を外食ミッションに切り替えました`;
+    } else if (kind === 'trip') {
+      sc.type = 'travel'; sc.place = 'out'; await setPlace('out');
+      for (const s of ['lunch','dinner']) if (open(s)) { plan[s] = 'undecided'; drop(s); }
+      msg = '🧳 遠征ミッションに切り替えました';
+    } else if (kind === 'forgot') {
+      if (!open('lunch')) return toast('昼食はクリア済みです');
+      plan.lunch = 'undecided'; plan.bulk = false; drop('lunch');
+      goTo = '#meal/lunch'; msg = '近くのお店から昼食ミッションを出そう';
+    } else if (kind === 'rainout') {
+      const was = sc.type;
+      sc.type = 'holiday'; sc.exercise = 'training'; sc.place = 'home'; await setPlace('home');
+      if (open('lunch') && (plan.lunch === 'golf')) { plan.lunch = 'undecided'; drop('lunch'); }
+      msg = `${was === 'golf' ? 'ゴルフ' : '試合'}は中止。休日モード＋室内トレーニングに切り替えました`;
+    } else if (kind === 'homedinner') {
+      if (open('dinner')) { plan.dinner = 'home'; drop('dinner'); }
+      msg = '夕食は家ごはん（撮影して記録）に切り替えました';
+    }
+    day.drinks = E.rebuildDrinks(day.drinks, sc, App.prof, now);
+    day.replanned = { at: new Date().toISOString(), kind };
+    await saveDay(day);
+    toast(msg + '。残りのミッションを組み直しました');
+    if (goTo.startsWith('#meal/')) App.tmp.forceChoose = !day.meals[goTo.slice(6)];
+    go(goTo);
+  }
+
+  /* ================= 7日間の戦績 ================= */
+  async function renderLog(){
+    const rows = await weekRows();
+    const g = App.game; const lv = G.level(g.xp);
+    const wk = G.weekRank(rows.map(r => r.score.pct));
+    const streak = G.streak(d => (rows.find(r => r.date === d)?.score.pct) ?? (g.dayPct[d] ?? 0), E.today());
+    const weekXp = rows.reduce((a, r) => a + r.xp, 0);
+    const perfect = rows.filter(r => r.perfect).length;
+    const ws = rows.filter(r => r.weight != null);
+    const wd = ws.length >= 2 ? (ws[ws.length - 1].weight - ws[0].weight) : null;
+    const dname = d => { const x = new Date(d + 'T12:00:00'); return `${x.getMonth() + 1}/${x.getDate()}(${'日月火水木金土'[x.getDay()]})`; };
+    view(`${back()}<div class="kicker" style="margin-top:6px">WEEKLY REPORT</div><h1>7日間の戦績</h1>
+      <div class="card gold"><div class="rankrow"><div class="rank r${wk.r}">${wk.r}</div><div style="flex:1"><b>今週 ${wk.r}ランク（${esc(wk.name)}）</b>
+        <div class="small">${wk.nextR ? `あと平均${wk.toNext}%で ${wk.nextR}ランク` : '最高ランク！'}　（良い5日の平均 ${wk.avg}%）</div></div></div>
+        <div class="statgrid"><div><b>${weekXp}</b><span>週間XP</span></div><div><b>🔥${streak}</b><span>連続達成</span></div><div><b>🌟${perfect}</b><span>完全達成</span></div><div><b>Lv.${lv.lv}</b><span>${esc(G.title(lv.lv))}</span></div></div>
+        <div class="comment">${G.weekComments(rows).map(c => `<div>💬 ${esc(c)}</div>`).join('')}</div></div>
+      <div class="card"><b>達成率</b><div class="bars">${rows.map(r => `<div class="bcol"><div class="bval">${r.score.active ? r.score.pct : ''}</div><div class="bbar ${r.perfect ? 'perfect' : r.score.pct >= G.ACHIEVED ? 'ok' : ''}" style="height:${Math.max(3, r.score.pct)}%"></div><div class="blab">${dname(r.date).replace(/\(.*\)/, '')}<br>${'日月火水木金土'[new Date(r.date + 'T12:00:00').getDay()]}</div></div>`).join('')}</div>
+        <div class="tiny">60%以上で達成日（連続にカウント）。体重の増減は評価に入りません。</div></div>
+      <div class="card"><b>体重</b>${wd != null ? `<span class="small">　7日間で ${wd >= 0 ? '+' : ''}${wd.toFixed(1)}kg（日々の上下は気にしない）</span>` : ''}
+        <div class="wrow">${rows.map(r => `<div><span class="tiny">${dname(r.date).replace(/\(.*\)/, '')}</span><b>${r.weight ?? '—'}</b></div>`).join('')}</div></div>
+      ${rows.slice().reverse().map(r => `<div class="card dayrow ${r.perfect ? 'perfect' : ''}"><div class="row"><b style="flex:2">${dname(r.date)}${r.type ? ' ' + E.SCHED[r.type].em : ''}${r.perfect ? ' 🌟' : ''}</b><span class="small" style="flex:none">${r.score.active ? r.score.pct + '%' : '記録なし'}${r.xp ? '・+' + r.xp + 'XP' : ''}</span></div>
+        ${r.foods.length ? r.foods.map(f => `<div class="small">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[f.s]} ${esc(f.txt)}</div>`).join('') : ''}
+        <div class="tiny" style="margin-top:4px">💧 ${r.score.drinkDone}/${r.score.drinkTotal}　👟 ${r.steps != null ? r.steps.toLocaleString() + '歩' : '—'}　💪 ${r.training ? r.training + '回' : '—'}　⚖️ ${r.weight ?? '—'}${r.drinking ? '　🍻' : ''}${r.recovered ? '　🌅リカバリー' : ''}${r.replanBack ? '　⚡立て直し' : ''}</div></div>`).join('')}
+      <button class="btn ghost" onclick="App.go('#badges')">🏅 バッジ一覧</button>`);
   }
 
   /* ================= 食事ミッション ================= */
@@ -298,8 +679,7 @@
     const t = targets(day);
     const conv = App.data.convenience.find(c => c.id === store);
     const m = day.meals[slot] || (day.meals[slot] = { status:'pending', moodRerolls:0, rerollCount:0, soldout:[] });
-    const todayIds = Object.entries(day.meals).filter(([s]) => s !== slot).flatMap(([, x]) => (x.mission?.items || []).map(i => i.id));
-    const mission = E.convMission({ products: App.data.products, store, storeName: conv.name, meal: slot, target: t, prof: App.prof, recentIds: [...await recentIds(), ...todayIds, ...todayIds],
+    const mission = E.convMission({ products: App.data.products, store, storeName: conv.name, meal: slot, target: t, prof: App.prof, hist: await buildHist(day, slot),
       seed: day.date + slot + store + (m.rerollCount || 0), soldout: m.soldout, exclude: opt.exclude || [], bigger: opt.bigger, lighter: opt.lighter });
     m.source = { type:'conv', id:store }; m.mission = mission; m.status = 'pending'; resetMeal(m);
     return mission;
@@ -310,19 +690,33 @@
     if (!chain) throw new Error('店舗が見つかりません（削除された可能性）');
     const m = day.meals[slot] || (day.meals[slot] = { status:'pending', moodRerolls:0, rerollCount:0, soldout:[] });
     m.source = { type:'chain', id:chainId }; resetMeal(m);
-    m.mission = E.chainMission({ chain, meal: slot, target: t, prof: App.prof, recentIds: await recentIds(), seed: day.date + slot + chainId + (m.rerollCount || 0), appetite: opt.appetite, soldout: m.soldout });
+    m.mission = E.chainMission({ chain, meal: slot, target: t, prof: App.prof, hist: await buildHist(day, slot), seed: day.date + slot + chainId + (m.rerollCount || 0), appetite: opt.appetite, soldout: m.soldout });
     m.status = 'pending';
     return m.mission;
   }
   function favAsChain(f){ return { id:'fav-' + f.id, name:f.name, type:'local', genre:'行きつけ', aliases:[f.name], lat:f.lat ?? null, lon:f.lon ?? null, address:f.address || null, favorite:true, items:(f.items || []).map((x, i) => ({ id:'fav-' + f.id + '-' + i, ...x, nutrition:{ kcal:x.kcal ?? null, protein:x.protein ?? null, fat:null, carbs:null, salt:x.salt ?? null }, source:'favorite', status:'active', role:'main' })) }; }
 
+  /* 直近30日でよく使った店（コンビニ・チェーン・行きつけ） */
+  async function frequentStores(){
+    const cnt = {};
+    for (let i = 0; i <= 30; i++) {
+      const d = await DB.get(dayKey(E.addDays(E.today(), -i))); if (!d) continue;
+      for (const m of Object.values(d.meals || {})) { const src = m.source; if (!src || m.status !== 'cleared') continue; if (src.type === 'conv' || src.type === 'chain') { const k = src.type + ':' + src.id; cnt[k] = (cnt[k] || 0) + 1; } }
+    }
+    return Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, n]) => {
+      const [type, ...rest] = k.split(':'); const id = rest.join(':');
+      const name = type === 'conv' ? App.data.convenience.find(c => c.id === id)?.name : App.data.chains.find(c => c.id === id)?.name;
+      return name ? { type, id, name, n } : null;
+    }).filter(Boolean);
+  }
   async function renderMeal(slot){
     const day = await getDay();
     if (slot === 'snack') return go('#snack');
     const m = day.meals[slot];
     const force = App.tmp.forceChoose; App.tmp.forceChoose = false;
-    if (!force && (m?.mission || m?.homeRecord || m?.status === 'cleared')) return renderMission(slot);
     const planned = day.schedule?.plan?.[slot];
+    if (!force && planned === 'drinking' && !m?.source) return renderDrinking(slot);
+    if (!force && (m?.mission || m?.homeRecord || m?.status === 'cleared')) return renderMission(slot);
     if (!force && planned && planned !== 'undecided' && planned !== 'chain') {
       if (planned.startsWith('conv:')) { await issueConv(day, slot, planned.slice(5), {}); await saveDay(day); return renderMission(slot); }
       if (planned === 'home') return renderHomeMeal(slot);
@@ -330,10 +724,12 @@
       if (planned === 'golf') return renderGolfMeal(slot);
       if (planned === 'nearby') return go('#nearby');
     }
+    const freq = await frequentStores();
     const order = ['行きつけ','個人店','牛丼・定食','寿司','中華・麺類','ファミレス・カレー','ファストフード・カフェ','居酒屋','その他'];
     const genres = [...new Set(App.data.chains.map(c => c.genre))].sort((a, b) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99);
     view(`${back()}<h1>${E.MEAL_LABEL[slot]}ミッション：店を選べ！</h1>
       <div class="chips" style="margin-bottom:8px">${['breakfast','lunch','dinner'].map(s => `<span class="chip ${s===slot?'on':''}" onclick="App.go('#meal/${s}')">${E.MEAL_LABEL[s]}${day.meals[s]?.status==='cleared'?' ✓':''}</span>`).join('')}</div>
+      ${freq.length ? `<h2>よく使う店</h2><div class="grid2">${freq.map(f => `<button class="tile fav" ${f.type === 'conv' ? `data-conv="${f.id}"` : `data-chain="${esc(f.id)}"`}><span class="em">${f.type === 'conv' ? '🏪' : '🍽'}</span><b>${esc(f.name)}</b><span class="small">最近${f.n}回</span></button>`).join('')}</div>` : ''}
       <h2>コンビニ</h2><div class="grid2">${App.data.convenience.map(c => `<button class="tile" data-conv="${c.id}"><span class="em">🏪</span><b>${c.name}</b></button>`).join('')}
         <button class="tile" onclick="App.go('#nearby')"><span class="em">📍</span><b>近くで探す</b></button></div>
       ${slot !== 'breakfast' ? `<h2>その他</h2><div class="grid2"><button class="tile" data-special="home"><span class="em">🏠</span><b>自宅の食事</b><span class="small">撮影して記録</span></button><button class="tile" data-special="drinking"><span class="em">🍻</span><b>飲み会</b></button>${day.schedule?.type==='golf'?`<button class="tile" data-special="golf"><span class="em">⛳</span><b>ゴルフ場</b></button>`:''}</div>` : `<div class="grid2" style="margin-top:10px"><button class="tile" data-special="home"><span class="em">🏠</span><b>自宅の食事</b><span class="small">撮影して記録</span></button></div>`}
@@ -348,13 +744,14 @@
     if (!m) return renderMeal(slot);
     if (location.hash !== '#meal/' + slot) history.replaceState(null, '', '#meal/' + slot);
     if (m.homeRecord) return renderHomeMeal(slot);
+    if (m.drinking) return renderDrinking(slot);
     const ms = m.mission;
     const cleared = m.status === 'cleared';
     const photo = await photoURL(m.photoId);
     let body = '';
     if (ms?.error) body = `<div class="warnbox">${esc(ms.error)}</div>`;
     else if (ms) {
-      body = `<div class="card gold mission"><div class="small">${E.MEAL_LABEL[slot]}ミッション${m.bulk ? '（朝まとめ買い）' : ''}</div><div class="cmd">${esc(ms.cmd)}</div>
+      body = `<div class="card gold mission"><div class="kicker">${cleared ? 'MISSION CLEAR' : 'MISSION'} ・ ${E.MEAL_LABEL[slot]}${m.bulk ? '（朝まとめ買い）' : ''}</div><div class="cmd">${esc(ms.cmd)}</div>
         ${ms.kind === 'sushi' ? `<div class="list">${ms.order.map(o => `<div class="li"><span class="t"><b>${esc(o.name)}</b></span><b>${o.qty}皿</b></div>`).join('')}${ms.side ? `<div class="li"><span class="t">${esc(ms.side)}</span><b>1つ</b></div>` : ''}</div><div class="warnbox">${esc(ms.caution)}</div>
             <div class="chips">${ms.order.map(o => `<span class="chip" data-sushi-out="${esc(o.name)}">${esc(o.name)}が無い</span>`).join('')}</div>`
           : ms.kind === 'guide' ? `<div class="small">${esc(ms.guide)}</div>`
@@ -362,6 +759,7 @@
         ${ms.sum ? `<div class="small" style="margin-top:8px">合計 ${yen(ms.sum.price)}${ms.sum.priceUnknown ? '＋価格不明' + ms.sum.priceUnknown + '品' : ''}・${Math.round(ms.sum.kcal)} kcal・たんぱく質 ${n1(ms.sum.protein)}g・塩分 ${n1(ms.sum.salt)}g</div>` : ''}
         ${ms.verdict ? `<div class="${ms.sum?.complete ? 'okbox' : 'warnbox'}">${esc(ms.verdict)}</div>` : ''}
         ${ms.allergyCheck?.length ? `<div class="warnbox">⚠️ アレルゲン未確認：${esc(ms.allergyCheck.join('・'))}。食べる前に必ず商品ラベル・店のアレルゲン表を確認してください。</div>` : ''}
+        ${ms.drinkLine && !ms.items?.some(i => i.role === 'drink') ? `<div class="small" style="margin-top:6px">🥤 飲み物：${esc(ms.drinkLine)}</div>` : ''}
         ${ms.tip ? `<div class="okbox">${esc(ms.tip)}</div>` : ''}${ms.note ? `<div class="okbox">${esc(ms.note)}</div>` : ''}
       </div>`;
       if (ms.kind === 'guide') body += `<button class="btn primary" id="ms-menu">📷 メニュー表を撮ってAIに選ばせる</button>${m.aiOrder ? aiOrderHTML(m.aiOrder) : ''}`;
@@ -370,8 +768,8 @@
       ${body}
       ${cleared ? `<div class="okbox">✅ ミッションクリア！${m.clearNote ? '　' + esc(m.clearNote) : ''}</div>${photo ? `<img class="photo" src="${photo}">` : ''}` : ''}
       ${!cleared && ms?.alternatives?.length ? `<details class="card"><summary><b>ほかの組み合わせ案（${ms.alternatives.length}）</b></summary><div class="tiny" style="margin:6px 0">選び直しは「気分での変更」1回として数えます。</div>${ms.alternatives.map((a, i) => `<div class="item"><div class="nm">${esc(a.cmd)}</div><div class="meta">${yen(a.sum.price)}・${Math.round(a.sum.kcal)}kcal・P${n1(a.sum.protein)}g${a.sum.complete ? '' : '・栄養不明あり'}</div><button class="btn sm" data-alt="${i}">この案にする</button></div>`).join('')}</details>` : ''}
-      ${!cleared && ms && !ms.error ? `<div class="card"><b>変更する</b><div class="small">気分での変更は1回まで（残り${Math.max(0, 1 - (m.moodRerolls || 0))}回）。理由のある変更は何度でもOK。</div>
-        <div class="chips" style="margin-top:8px"><span class="chip" data-re="mood">気分で変更</span><span class="chip" data-re="allergy">アレルギー</span><span class="chip" data-re="sick">体調不良</span><span class="chip" data-re="more">量が足りない</span><span class="chip" data-re="plan">予定変更</span></div></div>` : ''}
+      ${!cleared && ms && !ms.error ? `<div class="card"><b>指令を変更する</b><div class="small">理由を選んでください。「気分」だけ1日1食につき1回まで（残り${Math.max(0, 1 - (m.moodRerolls || 0))}回）。ほかは何度でもOK。</div>
+        <div class="chips" style="margin-top:8px">${[['soldout','売り切れ'],['plan','予定変更'],['more','量が足りない'],['sick','体調'],['allergy','アレルギー'],['mood','気分が変わった'],['other','その他']].map(([k, l]) => `<span class="chip ${k === 'mood' && (m.moodRerolls || 0) >= 1 ? 'off' : ''}" data-re="${k}">${l}</span>`).join('')}</div></div>` : ''}
       <button class="btn ghost" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">別の店にする</button>`,
       cleared ? `<button class="btn" onclick="App.go('#home')">ホームへ</button>` : (ms && !ms.error ? `<button class="btn" id="ms-manual" style="flex:1">手動でクリア</button><button class="btn primary" id="ms-photo" style="flex:2">📷 撮影してクリア</button>` : `<button class="btn" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">店を選び直す</button>`));
     document.querySelectorAll('[data-soldout]').forEach(b => b.onclick = async () => {
@@ -382,6 +780,7 @@
     });
     document.querySelectorAll('[data-sushi-out]').forEach(b => b.onclick = async () => { const d = await getDay(); const mm = d.meals[slot]; mm.soldout.push(b.dataset.sushiOut); mm.rerollCount++; await issueChain(d, slot, mm.source.id, {}); d.meals[slot].soldout = mm.soldout; await saveDay(d); renderMission(slot); });
     document.querySelectorAll('[data-re]').forEach(b => b.onclick = () => reroll(slot, b.dataset.re));
+    bindFav(() => renderMission(slot));
     const mp = $('#ms-photo'); if (mp) mp.onclick = () => clearWithPhoto(slot);
     const mn = $('#ms-manual'); if (mn) mn.onclick = () => clearMeal(slot, null, '手動確認');
     const mm = $('#ms-menu'); if (mm) mm.onclick = () => aiMenuChoose(slot, '通常');
@@ -393,6 +792,14 @@
       const rest = [{ items:x.mission.items, sum:x.mission.sum, cmd:x.mission.cmd, verdict:x.mission.verdict, tip:x.mission.tip }, ...x.mission.alternatives.filter((_, i) => i !== +b.dataset.alt)];
       x.mission = { ...x.mission, ...pick, alternatives: rest, note: null };
       await saveDay(d); renderMission(slot);
+    });
+  }
+  function bindFav(after){
+    document.querySelectorAll('[data-fav]').forEach(b => b.onclick = async () => {
+      const f = new Set(App.prof.favItems || []); const id = b.dataset.fav;
+      if (f.has(id)) f.delete(id); else f.add(id);
+      App.prof.favItems = [...f]; await DB.set('profile', App.prof);
+      toast(f.has(id) ? '★ お気に入りに追加（ときどき優先して出します）' : 'お気に入りを外しました'); after && after();
     });
   }
   function aiOrderHTML(o){
@@ -414,19 +821,46 @@
   }
   async function reroll(slot, reason){
     const day = await getDay(); const m = day.meals[slot];
-    if (reason === 'mood') { if ((m.moodRerolls || 0) >= 1) return toast('気分での変更は使い切りました。理由があれば理由を選んでください'); m.moodRerolls = (m.moodRerolls || 0) + 1; }
-    if (reason === 'allergy') {
-      return sheet(`<h2>どの商品が合わない？</h2>${(m.mission.items || []).map(it => `<button class="btn" data-ex="${esc(it.id)}">${esc(it.name)}</button>`).join('')}<p class="tiny">裏メニューでアレルギー設定も更新できます。</p>`, bg => bg.querySelectorAll('[data-ex]').forEach(b => b.onclick = async () => {
-        const d = await getDay(); const mm = d.meals[slot]; mm.soldout.push(b.dataset.ex);
-        mm.mission = E.replaceItem(mm.mission, b.dataset.ex, { products: App.data.products, prof: App.prof, soldout: mm.soldout, seed: d.date + slot + 'al' + mm.soldout.length });
-        await saveDay(d); bg.remove(); renderMission(slot);
+    const ms = m.mission;
+    m.changes = [...(m.changes || []), { reason, at: nowHM() }];
+    if (reason === 'mood') {
+      if ((m.moodRerolls || 0) >= 1) { await saveDay(day); return toast('気分での変更は使い切りました。ほかの理由なら何度でも変更できます'); }
+      m.moodRerolls = (m.moodRerolls || 0) + 1;
+    }
+    if (reason === 'soldout' || reason === 'allergy') {
+      await saveDay(day);
+      const list = ms.kind === 'sushi' ? ms.order.map(o => ({ id:'neta:' + o.name, name:o.name })) : (ms.items || []);
+      if (!list.length) return toast('入れ替えられる商品がありません。「その他」で選び直せます');
+      return sheet(`<h2>${reason === 'soldout' ? 'どれが売り切れ？' : 'どれが合わない？'}</h2><p class="small">同じ店の登録商品から代わりを指定します。</p>${list.map(it => `<button class="btn" data-ex="${esc(it.id)}">${esc(it.name)}</button>`).join('')}${reason === 'allergy' ? '<p class="tiny">裏メニュー「好き嫌い・アレルギー」も更新しておくと、次から出ません。</p>' : ''}`, bg => bg.querySelectorAll('[data-ex]').forEach(b => b.onclick = async () => {
+        const d = await getDay(); const mm = d.meals[slot]; const id = b.dataset.ex;
+        bg.remove();
+        if (id.startsWith('neta:')) { mm.soldout.push(id.slice(5)); mm.rerollCount = (mm.rerollCount || 0) + 1; const keep = mm.soldout; await issueChain(d, slot, mm.source.id, {}); d.meals[slot].soldout = keep; }
+        else if (mm.mission.kind === 'chain') { mm.soldout.push(id); mm.rerollCount = (mm.rerollCount || 0) + 1; const keep = mm.soldout; await issueChain(d, slot, mm.source.id, {}); d.meals[slot].soldout = keep; }
+        else { mm.soldout.push(id); mm.mission = E.replaceItem(mm.mission, id, { products: App.data.products, prof: App.prof, soldout: mm.soldout, seed: d.date + slot + reason + mm.soldout.length }); }
+        await saveDay(d); renderMission(slot);
       }));
     }
-    if (reason === 'plan') { App.tmp.forceChoose = true; return go('#mealchoose/' + slot); }
+    if (reason === 'plan') {
+      await saveDay(day);
+      return sheet(`<h2>予定変更</h2><div class="list card">
+          <div class="li" data-pp="store"><span class="t">🏪 別の店にする</span>›</div>
+          <div class="li" data-pp="home"><span class="t">🏠 家で食べることになった</span>›</div>
+          <div class="li" data-pp="more"><span class="t">⚡ 1日の予定が変わった（飲み会・外食・出張など）</span>›</div></div>`, bg => bg.querySelectorAll('[data-pp]').forEach(el => el.onclick = async () => {
+        bg.remove();
+        if (el.dataset.pp === 'store') { App.tmp.forceChoose = true; return go('#mealchoose/' + slot); }
+        if (el.dataset.pp === 'home') { const d = await getDay(); if (d.schedule?.plan) d.schedule.plan[slot] = 'home'; delete d.meals[slot]; d.replanned = { at:new Date().toISOString(), kind:'home' }; await saveDay(d); return renderHomeMeal(slot); }
+        replanSheet();
+      }));
+    }
     m.rerollCount = (m.rerollCount || 0) + 1;
     const opt = reason === 'more' ? { bigger:true, appetite:'big' } : reason === 'sick' ? { lighter:true, appetite:'light' } : {};
-    if (m.source?.type === 'conv') await issueConv(day, slot, m.source.id, opt); else if (m.source?.type === 'chain') await issueChain(day, slot, m.source.id, opt);
+    const keep = { moodRerolls: m.moodRerolls, rerollCount: m.rerollCount, changes: m.changes, soldout: m.soldout };
+    if (m.source?.type === 'conv') await issueConv(day, slot, m.source.id, opt);
+    else if (m.source?.type === 'chain') await issueChain(day, slot, m.source.id, opt);
+    else { await saveDay(day); toast('この店は登録メニューが無いので、メニュー写真かガイドで選んでください'); return renderMission(slot); }
+    Object.assign(day.meals[slot], keep);
     if (reason === 'sick') day.meals[slot].mission.tip = '体調が悪い時は無理に食べず、消化の良いもの・水分を優先。つらい時は受診を。';
+    if (reason === 'more') day.meals[slot].mission.tip = '量を増やした指令です。ゆっくり食べて満足感を。';
     await saveDay(day); renderMission(slot);
   }
   async function clearWithPhoto(slot){
@@ -452,15 +886,24 @@
   async function clearMeal(slot, photoId, note){
     const day = await getDay(); const m = day.meals[slot];
     m.status = 'cleared'; m.photoId = photoId || m.photoId; m.clearNote = note; m.clearedAt = new Date().toISOString();
-    await saveDay(day); await gain(m.homeRecord ? 'homeMeal' : 'meal', E.MEAL_LABEL[slot] + 'クリア');
-    renderMission(slot);
+    await saveDay(day);
+    await award(m.homeRecord ? 'homeMeal' : 'meal', E.MEAL_LABEL[slot] + 'ミッション', { big:true, sub: m.homeRecord ? '家ごはんを記録！' : (m.mission?.storeName ? E.shortStore(m.mission.storeName) + 'の指令を完遂！' : '指令どおり！') });
+    go('#home');
   }
 
   /* 自宅の食事：撮影して記録だけ（献立は指示しない） */
+  async function recordHomeMeal(slot, blob, memo){
+    const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
+    mm.homeRecord = true; mm.photoId = await DB.putPhoto(blob, 'homeMeal'); mm.memo = memo || ''; mm.status = 'cleared'; mm.clearedAt = new Date().toISOString();
+    await saveDay(d);
+    await award('homeMeal', E.MEAL_LABEL[slot] + '（家ごはん）', { big:true, sub:'作ってくれた料理を記録！' });
+    if (await S.aiReady()) { try { const r = await S.describeMeal(blob); const d2 = await getDay(); d2.meals[slot].dishes = r.dishes; await saveDay(d2); } catch {} }
+    go('#home');
+  }
   async function renderHomeMeal(slot){
     const day = await getDay(); const m = day.meals[slot] || {};
     const photo = await photoURL(m.photoId);
-    view(`${back()}<h1>🏠 ${E.MEAL_LABEL[slot]}：家の食事を撮影しろ！</h1>
+    view(`${back()}<div class="kicker" style="margin-top:6px">MISSION ・ ${E.MEAL_LABEL[slot]}</div><h1>🏠 家ごはんを撮影しろ！</h1>
       <p class="small">作ってくれた料理をそのまま楽しもう。写真で記録するだけでOK。おかわりする時は、ご飯よりおかずを。</p>
       ${photo ? `<img class="photo" src="${photo}">` : ''}${m.dishes ? `<div class="card"><b>記録：</b>${esc(m.dishes.join('、'))}</div>` : ''}
       ${m.status === 'cleared' ? `<div class="okbox">✅ 記録済み</div>` : ''}
@@ -469,10 +912,7 @@
     const b = $('#hm-photo'); if (!b) return;
     b.onclick = async () => {
       const blob = await pickPhoto(); if (!blob) return;
-      const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
-      mm.homeRecord = true; mm.photoId = await DB.putPhoto(blob, 'homeMeal'); mm.memo = $('#hm-note').value; mm.status = 'cleared'; mm.clearedAt = new Date().toISOString();
-      if (await S.aiReady()) { try { mm.dishes = (await S.describeMeal(blob)).dishes; } catch {} }
-      await saveDay(d); await gain('homeMeal', '家の食事を記録'); renderHomeMeal(slot);
+      await recordHomeMeal(slot, blob, $('#hm-note').value);
     };
   }
 
@@ -480,7 +920,7 @@
   async function renderDrinking(slot){
     const day = await getDay(); day.alcohol = day.alcohol || [];
     const g = day.alcohol.reduce((s, a) => s + a.g, 0);
-    view(`${back()}<h1>🍻 飲み会ミッション</h1>
+    view(`${back()}<div class="kicker" style="margin-top:6px">MISSION ・ 飲み会</div><h1>🍻 飲み会を乗り切れ！</h1>
       <div class="card gold mission"><div class="cmd">1杯目の前に水をコップ1杯飲め！ お酒は純アルコール20gまで、つまみは${E.IZAKAYA_FOOD.slice(0,4).join('・')}から頼め！</div>
       <div class="small">揚げ物・締めのラーメンは今日は見送り。お酒1杯ごとに水1杯。無糖のお酒でもアルコールの量は同じです。</div></div>
       <button class="btn primary" id="dk-menu">📷 メニュー表を撮ってAIに注文を決めさせる</button>
@@ -488,10 +928,18 @@
       <h2>飲んだお酒を記録（今日 ${g.toFixed(1)}g）</h2>
       ${g >= 20 ? `<div class="warnbox">純アルコール${g.toFixed(1)}g。目安の20gを超えました。ここからは水かお茶にしろ！</div>` : ''}
       <div class="list card">${E.DRINKS_ALC.map((d, i) => `<div class="li"><span class="t">${d.name}<div class="tiny">${d.ml}ml・${d.abv}% → 約${E.alcoholG(d.ml, d.abv)}g（一般的な量での概算）</div></span><button class="btn sm" data-alc="${i}">＋1杯</button></div>`).join('')}</div>`,
-      `<button class="btn" id="dk-done">📷 食べた物を撮影してクリア</button>`);
+      (day.meals[slot]?.status === 'cleared' ? `<div class="okbox" style="flex:2;margin:0">✅ 食事はクリア済み</div>` : `<button class="btn primary" id="dk-done" style="flex:2">📷 撮影してクリア</button>`) + (day.flags?.drinkEnd ? '' : `<button class="btn" id="dk-end" style="flex:1">🏁 飲み会終了</button>`));
+    if ($('#dk-end')) $('#dk-end').onclick = async () => {
+      const d = await getDay(); const gsum = (d.alcohol || []).reduce((a, x) => a + x.g, 0);
+      if (d.flags?.drinkEnd) return toast('記録済みです');
+      d.flags = { ...(d.flags || {}), drinkEnd: true }; await saveDay(d);
+      if (gsum <= 20) await award('check', '飲み会', { xp:0, bonus:['drinkWell'], title:'ナイス乗り切り！', sub:`純アルコール約${gsum.toFixed(0)}g。上手にコントロールできた！`, big:true });
+      else { await award('check', '', { xp:0, silent:true }); sheet(`<h2>🍻 おつかれさま！</h2><div class="okbox">楽しめたなら OK。減点はありません。<br>寝る前に水を1杯。明日は「リカバリーミッション」で戻そう。</div><button class="btn primary" onclick="this.closest('.sheet-bg').remove();App.go('#home')">ホームへ</button>`); return; }
+      go('#home');
+    };
     $('#dk-menu').onclick = () => aiMenuChoose(slot, '飲み会');
     document.querySelectorAll('[data-alc]').forEach(b => b.onclick = async () => { const d = await getDay(); d.alcohol = d.alcohol || []; const x = E.DRINKS_ALC[+b.dataset.alc]; d.alcohol.push({ name:x.name, g:E.alcoholG(x.ml, x.abv), at:new Date().toTimeString().slice(0,5) }); await saveDay(d); renderDrinking(slot); });
-    $('#dk-done').onclick = async () => { const blob = await pickPhoto(); if (!blob) return; const d = await getDay(); const m = d.meals[slot] || (d.meals[slot] = { soldout:[] }); m.mission = m.mission || { kind:'guide', storeName:'飲み会', cmd:'飲み会', guide:'' }; await saveDay(d); clearMeal(slot, await DB.putPhoto(blob, 'meal'), '飲み会'); };
+    if ($('#dk-done')) $('#dk-done').onclick = async () => { const blob = await pickPhoto(); if (!blob) return; const d = await getDay(); const m = d.meals[slot] || (d.meals[slot] = { soldout:[] }); m.drinking = true; m.mission = m.mission || { kind:'guide', storeName:'飲み会', cmd:'飲み会', guide:'' }; await saveDay(d); clearMeal(slot, await DB.putPhoto(blob, 'meal'), '飲み会'); };
   }
 
   /* ゴルフ場の昼食 */
@@ -520,61 +968,81 @@
 
   /* ================= お助け間食 ================= */
   async function renderSnack(){
-    const st = App.tmp.snackStore || 'seven';
-    view(`${back()}<h1>🆘 お助け間食</h1><p class="small">お腹が空いたら我慢しなくていい。今の気分を選べ！</p>
-      <label>今いる店</label><div class="chips" id="sn-st">${App.data.convenience.map(c => `<span class="chip ${c.id===st?'on':''}" data-s="${c.id}">${c.name}</span>`).join('')}</div>
-      <h2>気分</h2><div class="grid2">
+    const st = App.settings.snackStore || 'seven';
+    view(`${back()}<div class="kicker" style="margin-top:6px">SUPPORT</div><h1>🆘 お助け間食</h1><p class="small">お腹が空いたら我慢しなくていい。ちょうどいい1品を指令します。</p>
+      <div class="chips" id="sn-st">${App.data.convenience.map(c => `<span class="chip ${c.id===st?'on':''}" data-s="${c.id}">${E.shortStore(c.name)}</span>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px">
         <button class="tile" data-mood="sweet"><span class="em">🍰</span><b>甘いもの</b></button>
         <button class="tile" data-mood="salty"><span class="em">🧂</span><b>しょっぱいもの</b></button>
         <button class="tile" data-mood="hungry"><span class="em">🍙</span><b>しっかり食べたい</b></button>
         <button class="tile" data-mood="light"><span class="em">🌿</span><b>軽くつまみたい</b></button></div>
       <div id="sn-out"></div>`);
-    $('#sn-st').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; App.tmp.snackStore = c.dataset.s; renderSnack(); };
+    $('#sn-st').onclick = async e => { const c = e.target.closest('.chip'); if (!c) return; App.settings.snackStore = c.dataset.s; await DB.set('settings', App.settings); renderSnack(); };
     document.querySelectorAll('[data-mood]').forEach(b => b.onclick = async () => {
-      const conv = App.data.convenience.find(c => c.id === (App.tmp.snackStore || 'seven'));
+      const conv = App.data.convenience.find(c => c.id === (App.settings.snackStore || 'seven'));
       App.tmp.snackN = (App.tmp.snackN || 0) + 1;
       const ms = E.snackMission({ products: App.data.products, store: conv.id, storeName: conv.name, mood: b.dataset.mood, prof: App.prof, seed: E.today() + b.dataset.mood + App.tmp.snackN });
-      $('#sn-out').innerHTML = ms.error ? `<div class="warnbox">${esc(ms.error)}</div>` : `<div class="card gold mission" style="margin-top:12px"><div class="cmd">${esc(ms.cmd)}</div>${ms.items.map(it => itemHTML(it)).join('')}<div class="okbox">${esc(ms.tip)}</div><button class="btn primary" id="sn-eat">食べた！（記録）</button><button class="btn ghost" data-mood="${b.dataset.mood}" id="sn-again">別のにする</button></div>`;
+      $('#sn-out').innerHTML = ms.error ? `<div class="warnbox">${esc(ms.error)}</div>` : `<div class="card gold mission" style="margin-top:12px"><div class="kicker">MISSION</div><div class="cmd">${esc(ms.cmd)}</div>${ms.items.map(it => itemHTML(it)).join('')}<div class="okbox">${esc(ms.tip)}</div><button class="btn primary" id="sn-eat">これにした！</button><button class="btn ghost" id="sn-again">別のにする</button></div>`;
       if (ms.error) return;
       $('#sn-again').onclick = () => b.click();
-      $('#sn-eat').onclick = async () => { const d = await getDay(); d.snacks.push({ at:new Date().toTimeString().slice(0,5), items:ms.items.map(i => i.name), sum:ms.sum }); await saveDay(d); await gain('snackLog', '間食を記録'); go('#home'); };
+      bindFav(null);
+      $('#sn-eat').onclick = async () => {
+        const d = await getDay(); d.snacks.push({ at: nowHM(), items: ms.items.map(i => i.name), sum: ms.sum, via:'helper' }); await saveDay(d);
+        const nice = d.snacks.filter(x => x.via === 'helper').length <= 2;   // 1日2回までボーナス（我慢ではなく選び方を評価）
+        await award('snackLog', 'お助け間食', { bonus: nice ? ['snackNice'] : [], title:'ナイスチョイス！', sub:'ちょうどいい1品を選べた' });
+        go('#home');
+      };
     });
   }
 
   /* ================= 飲み物 ================= */
   async function renderDrinks(){
-    const day = await getDay(); if (!day.drinks) day.drinks = E.drinkPlan(day.schedule, App.prof, await vendingList());
-    const caf = (day.caffeine || []).reduce((s, c) => s + c.mg, 0);
-    const vend = (await vendingList()).flatMap(v => v.items.filter(i => i.caffeineMg).map(i => ({ ...i, place:v.name })));
-    view(`${back()}<h1>💧 飲み物ミッション</h1>
-      <div class="list card">${day.drinks.map(d => `<div class="li"><span class="small" style="width:44px">${d.time}</span><span class="t">${esc(d.text)}</span>${d.done ? `<span class="done">✓</span>` : `<button class="btn sm ok" data-drink="${esc(d.id)}">飲んだ！</button>`}</div>`).join('')}</div>
-      <h2>☕ コーヒー・カフェイン（今日 約${caf}mg）</h2>
+    const day = await ensureDay(await getDay());
+    const ctx = await drinkCtx(day);
+    const caf = ctx.caffeineMg;
+    const place = ctx.place;
+    const vendCaf = ctx.vending.filter(i => i.caffeineMg);
+    view(`${back()}<div class="kicker" style="margin-top:6px">HYDRATION</div><h1>💧 飲み物ミッション</h1>
+      <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
+      <p class="tiny">場所に合わせて指令が変わります。飲み物のためだけに買い物はさせません。</p>
+      <div class="list card">${day.drinks.map(d => { const t = d.done && d.said ? d.said : E.drinkText(d, ctx).text; return `<div class="li"><span class="small" style="width:44px">${d.time}</span><span class="t ${d.done ? 'small' : ''}">${esc(t)}</span>${d.done ? `<span class="done">✓</span>` : `<button class="btn sm ok" data-drink="${esc(d.id)}">飲んだ！</button>`}</div>`; }).join('')}</div>
+      <h2>☕ コーヒー・カフェイン（今日 約${caf}mg・${ctx.coffeeCount}杯）</h2>
       ${E.caffeineAdvice(caf, App.prof.sleep).map(m => `<div class="warnbox">${esc(m)}</div>`).join('')}
       <div class="card"><div class="chips">
-        <span class="chip" data-caf="coffee:190">ブラックコーヒー 190ml缶</span><span class="chip" data-caf="coffee:350">ブラックコーヒー 350ml</span><span class="chip" data-caf="coffee:500">ブラックコーヒー 500ml</span><span class="chip" data-caf="greentea:500">緑茶 500ml</span>
-        ${vend.map(v => `<span class="chip" data-vcaf="${v.caffeineMg}|${esc(v.name)}">${esc(v.place)}：${esc(v.name)}</span>`).join('')}</div>
-      <p class="tiny">カフェインは日本食品標準成分表の浸出液の値（コーヒー60mg/100ml・緑茶20mg/100ml）からの概算です。商品表示がある場合はそちらが優先。</p></div>`);
+        ${E.COFFEE_PRESETS.map((c, i) => `<span class="chip" data-cf="${i}">${c.label}</span>`).join('')}
+        ${vendCaf.map((v, i) => `<span class="chip" data-vcf="${i}">${esc(v.place)}：${esc(v.name)}${v.size ? ' ' + esc(v.size) : ''}</span>`).join('')}</div>
+      <p class="tiny">カフェインは日本食品標準成分表の浸出液の値（コーヒー60mg/100ml）からの概算。自販機に登録した商品は、その表示値を使います。</p>
+      ${(day.caffeine || []).length ? `<div class="small">${day.caffeine.map(c => `${c.at} ${esc(c.name)}（約${c.mg}mg）`).join('<br>')}</div>` : ''}</div>`);
     bindDrinkButtons();
-    document.querySelectorAll('[data-caf]').forEach(b => b.onclick = async () => { const [k, ml] = b.dataset.caf.split(':'); const d = await getDay(); d.caffeine = d.caffeine || []; d.caffeine.push({ name:b.textContent, mg:E.caffeineEstimate(k, +ml), at:new Date().toTimeString().slice(0,5) }); await saveDay(d); renderDrinks(); });
-    document.querySelectorAll('[data-vcaf]').forEach(b => b.onclick = async () => { const [mg, nm] = b.dataset.vcaf.split('|'); const d = await getDay(); d.caffeine = d.caffeine || []; d.caffeine.push({ name:nm, mg:+mg, at:new Date().toTimeString().slice(0,5) }); await saveDay(d); renderDrinks(); });
+    document.querySelectorAll('[data-place]').forEach(b => b.onclick = async () => { await setPlace(b.dataset.place); renderDrinks(); });
+    document.querySelectorAll('[data-cf]').forEach(b => b.onclick = async () => { const c = E.COFFEE_PRESETS[+b.dataset.cf]; await logCoffee(c.label, c.mg ?? E.caffeineEstimate('coffee', c.ml)); renderDrinks(); });
+    document.querySelectorAll('[data-vcf]').forEach(b => b.onclick = async () => { const v = vendCaf[+b.dataset.vcf]; await logCoffee(v.name + (v.size ? ' ' + v.size : ''), v.caffeineMg); renderDrinks(); });
   }
 
   /* ================= トレーニング ================= */
   async function renderTrain(){
-    const o = App.tmp.train || { place:'home', min:15, goal:'fat' };
+    const o = App.tmp.train || App.settings.lastTrain || { place: curPlace(await getDay()) === 'office' ? 'office' : 'home', min:15, goal:'fat' };
     const ch = (k, opts) => `<div class="chips" data-k="${k}">${opts.map(([v,l]) => `<span class="chip ${String(o[k])===String(v)?'on':''}" data-v="${v}">${l}</span>`).join('')}</div>`;
-    view(`${back()}<h1>💪 トレーニング</h1>
+    view(`${back()}<div class="kicker" style="margin-top:6px">TRAINING</div><h1>💪 トレーニング</h1>
       <label>場所</label>${ch('place', [['home','自宅'],['office','会社'],['gym','ジム'],['outdoor','屋外']])}
       <label>時間</label>${ch('min', [[5,'5分'],[10,'10分'],[15,'15分'],[20,'20分'],[30,'30分']])}
       <label>目的</label>${ch('goal', [['fat','脂肪燃焼'],['strength','筋力'],['cardio','有酸素']])}
-      <div id="tr-out"></div>`, `<button class="btn primary" id="tr-go">メニューを決めろ！</button>`);
+      <div id="tr-out"></div>`, `<button class="btn primary" id="tr-go">メニューを指令しろ！</button>`);
     document.querySelectorAll('[data-k]').forEach(g => g.onclick = e => { const c = e.target.closest('.chip'); if (!c) return; o[g.dataset.k] = isNaN(c.dataset.v) ? c.dataset.v : +c.dataset.v; App.tmp.train = o; renderTrain(); });
-    $('#tr-go').onclick = () => {
+    const show = () => {
       App.tmp.trainN = (App.tmp.trainN || 0) + 1;
       const plan = E.trainingPlan(o.place, o.min, o.goal, E.today() + App.tmp.trainN);
-      $('#tr-out').innerHTML = `<div class="card gold mission" style="margin-top:12px"><div class="cmd">この順番でやれ！</div><div class="list">${plan.map((p, i) => `<div class="li"><span class="small">${i+1}</span><span class="t"><b>${esc(p.name)}</b><div class="small">${esc(p.detail)}</div></span></div>`).join('')}</div><div class="tiny">痛みが出たら中止。体調が悪い日は休むのもミッション。</div><button class="btn ok" id="tr-done">完了した！</button></div>`;
-      $('#tr-done').onclick = async () => { const d = await getDay(); d.training.push({ at:new Date().toTimeString().slice(0,5), ...o, plan }); await saveDay(d); await gain('training', 'トレーニング完了'); go('#home'); };
+      $('#tr-out').innerHTML = `<div class="card gold mission" style="margin-top:12px"><div class="kicker">MISSION</div><div class="cmd">この順番でやれ！</div><div class="list">${plan.map((p, i) => `<div class="li"><span class="small">${i+1}</span><span class="t"><b>${esc(p.name)}</b><div class="small">${esc(p.detail)}</div></span></div>`).join('')}</div><div class="tiny">痛みが出たら中止。体調が悪い日は休むのもミッション。</div><button class="btn ok" id="tr-done">完了した！</button><button class="btn ghost" id="tr-again">別のメニュー</button></div>`;
+      $('#tr-again').onclick = show;
+      $('#tr-done').onclick = async () => {
+        const d = await getDay(); d.training.push({ at: nowHM(), ...o, plan }); await saveDay(d);
+        App.settings.lastTrain = { place:o.place, min:o.min, goal:o.goal }; await DB.set('settings', App.settings);
+        await award('training', 'トレーニング完了', { big:true, title:'TRAINING CLEAR', sub:`${o.min}分やり切った！` }); go('#home');
+      };
+      $('#tr-out').scrollIntoView({ behavior:'smooth' });
     };
+    $('#tr-go').onclick = show;
+    if (App.tmp.trainAuto) { App.tmp.trainAuto = false; show(); }
   }
 
   /* ================= 体重・歩数 ================= */
@@ -597,7 +1065,7 @@
       <div class="card"><b>週1回の全身写真（任意・本人のみ閲覧）</b><div class="small">${bp.length}枚保存。共有はされません。</div>
         <button class="btn" id="bp-add">📷 撮影する</button>${bp.length ? `<button class="btn ghost" id="bp-view">写真を見る</button>` : ''}</div>`);
     drawChart($('#wchart'), ma, +App.prof.goalKg);
-    const saveW = async (kg, photoId) => { const list = await DB.get('weights', []); const i = list.findIndex(w => w.date === day.date); const rec = { date:day.date, kg, photoId }; if (i >= 0) list[i] = { ...list[i], ...rec }; else list.push(rec); await DB.set('weights', list); const d = await getDay(); const first = !d.weightLogged; d.weightLogged = true; await saveDay(d); if (first) await gain('weight', '体重を記録'); else toast('更新しました'); renderBody(); };
+    const saveW = async (kg, photoId) => { await saveWeight(kg, photoId); renderBody(); };
     $('#w-save').onclick = () => { const v = +$('#w-in').value; if (!(v > 20 && v < 300)) return toast('体重を確認してください'); saveW(v); };
     $('#w-photo').onclick = async () => {
       const blob = await pickPhoto(); if (!blob) return; const pid = await DB.putPhoto(blob, 'scale');
@@ -606,7 +1074,8 @@
       sheet(`<h2>読み取り結果を確認</h2><img class="photo" src="${URL.createObjectURL(blob)}"><label>体重(kg)${kg == null ? '　※読み取れなかったので入力してください' : ''}</label><input id="w-ok" type="number" step="0.1" inputmode="decimal" value="${kg ?? ''}"><button class="btn primary" id="w-okb">この数字で保存</button>`,
         bg => bg.querySelector('#w-okb').onclick = () => { const v = +bg.querySelector('#w-ok').value; if (!(v > 20 && v < 300)) return toast('体重を確認してください'); bg.remove(); saveW(v, pid); });
     };
-    $('#st-save').onclick = async () => { const d = await getDay(); const first = d.steps == null; d.steps = +$('#st-in').value || 0; await saveDay(d); if (first) await gain('steps', '歩数を記録'); renderBody(); };
+    $('#st-save').onclick = async () => { await saveSteps(Math.round(+$('#st-in').value || 0)); renderBody(); };
+    if (App.tmp.bodyPhoto) { App.tmp.bodyPhoto = false; setTimeout(() => $('#w-photo').click(), 50); }
     $('#bp-add').onclick = async () => { const blob = await pickPhoto(); if (!blob) return; const list = await DB.get('bodyPhotos', []); list.push({ date:E.today(), photoId: await DB.putPhoto(blob, 'body') }); await DB.set('bodyPhotos', list); await gain('bodyPhoto', '全身写真'); renderBody(); };
     const bv = $('#bp-view'); if (bv) bv.onclick = async () => { const urls = await Promise.all(bp.slice(-8).reverse().map(async b => `<div class="small">${b.date}</div><img class="photo" src="${await photoURL(b.photoId)}">`)); sheet(`<h2>全身写真（あなただけ）</h2>${urls.join('')}`); };
   }
@@ -696,6 +1165,7 @@
     view(`${back()}<h1>🗝 裏メニュー</h1>
       <div class="list card">
         <div class="li" onclick="App.go('#import')"><span class="t">📥 ChatGPTから店舗を追加</span>›</div>
+        <div class="li" onclick="App.go('#places')"><span class="t">🏠 自宅・会社の位置（場所の自動判定）</span>›</div>
         <div class="li" onclick="App.go('#fav')"><span class="t">⭐ 行きつけ店・メニュー写真登録</span>›</div>
         <div class="li" onclick="App.go('#vending')"><span class="t">🥤 会社の自販機登録</span>›</div>
         <div class="li" onclick="App.go('#setup')"><span class="t">🍽 好き嫌い・アレルギー・予算・体の情報</span>›</div>
@@ -897,8 +1367,8 @@
 
   async function renderBadges(){
     const g = App.game;
-    view(`${back('#ura')}<h1>🏅 バッジ</h1><p class="small">体重の減り方ではなく、続けた健康行動を評価します。</p>
-      <div class="grid2">${E.BADGES.map(b => `<div class="tile" style="${g.badges.includes(b.id) ? '' : 'opacity:.35'}"><span class="em">${b.em}</span><b>${b.name}</b></div>`).join('')}</div>
+    view(`${back('#ura')}<h1>🏅 バッジ</h1><p class="small">体重の増減ではなく、続けた健康行動を評価します。獲得 ${g.badges.length}/${G.BADGES.length}</p>
+      <div class="grid2">${G.BADGES.map(b => `<div class="tile" style="${g.badges.includes(b.id) ? '' : 'opacity:.35'}"><span class="em">${b.em}</span><b>${b.name}</b></div>`).join('')}</div>
       <div class="card" style="margin-top:12px"><div class="small">食事ミッション ${g.counts.meal || 0}回・家の食事記録 ${g.counts.homeMeal || 0}回・水分 ${g.counts.drink || 0}回・体重 ${g.counts.weight || 0}回・トレーニング ${g.counts.training || 0}回</div></div>`);
   }
 
@@ -985,6 +1455,18 @@
     });
   }
 
+  /* ================= 場所の登録（自動判定用・任意） ================= */
+  async function renderPlaces(){
+    const P = App.settings.places || {};
+    view(`${back('#ura')}<h1>🏠 自宅・会社の位置</h1>
+      <p class="small">位置情報がOFFでも、ホーム画面の場所ボタンで1タップ切り替えできます。ここで位置を登録し、位置情報をONにすると、アプリを開いた時に1回だけ現在地を見て「自宅／会社／外出先」を自動で切り替えます（追跡・履歴保存はしません）。</p>
+      <div class="list card">${['home','office'].map(k => `<div class="li"><span class="t">${E.PLACES[k].em} ${E.PLACES[k].label}<div class="tiny">${P[k] ? '登録済み' : '未登録'}</div></span><button class="btn sm" data-reg="${k}">今いる場所で登録</button>${P[k] ? `<button class="btn sm" data-unreg="${k}">削除</button>` : ''}</div>`).join('')}</div>
+      <div class="card"><div class="loc"><div style="flex:1"><b>位置情報で自動判定</b><div class="tiny">${App.settings.locationOn ? 'ON' : 'OFF（通常）'}</div></div><button class="toggle ${App.settings.locationOn ? 'on' : ''}" id="pl-t"></button></div></div>`);
+    document.querySelectorAll('[data-reg]').forEach(b => b.onclick = async () => { try { const p = await S.locateOnce(); App.settings.places = { ...(App.settings.places || {}), [b.dataset.reg]: { lat:p.lat, lon:p.lon } }; await DB.set('settings', App.settings); toast('登録しました'); renderPlaces(); } catch (e) { toast(e.message); } });
+    document.querySelectorAll('[data-unreg]').forEach(b => b.onclick = async () => { const P2 = { ...(App.settings.places || {}) }; delete P2[b.dataset.unreg]; App.settings.places = P2; await DB.set('settings', App.settings); renderPlaces(); });
+    $('#pl-t').onclick = async () => { App.settings.locationOn = !App.settings.locationOn; await DB.set('settings', App.settings); renderPlaces(); };
+  }
+
   /* ================= ルーター ================= */
   async function route(){
     const h = location.hash || '#home';
@@ -992,7 +1474,7 @@
     const [path, q] = h.split('?');
     const [name, arg] = path.slice(1).split('/');
     const R = { home:renderHome, setup:renderSetup, morning:renderMorning, meal:() => renderMeal(arg), mealchoose:() => { App.tmp.forceChoose = true; renderMeal(arg); }, bulk:renderBulk, snack:renderSnack, drinks:renderDrinks, train:renderTrain, body:renderBody, nearby:renderNearby,
-      ura:renderUra, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos };
+      ura:renderUra, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, places: renderPlaces };
     try { await (R[name] || renderHome)(); } catch (e) { console.error(e); view(`<div class="warnbox">エラー：${esc(e.message)}</div><button class="btn" onclick="App.go('#home')">ホームへ</button>`); }
   }
   App.route = route;
