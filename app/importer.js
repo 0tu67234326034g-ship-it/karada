@@ -139,7 +139,7 @@
     const pm = new Map((current.customProducts || []).map(p => [p.id, p]));
     for (const p of plan.newProducts) pm.set(p.id, p);
     const log = await DB.get('importLog', []);
-    log.push({ at:new Date().toISOString(), stores:plan.stores, items:plan.items, products:plan.products, errors:plan.errors.length });
+    log.push({ at:E.localISO(), stores:plan.stores, items:plan.items, products:plan.products, errors:plan.errors.length });
     await DB.setMany({ customStores: stores, customProducts: [...pm.values()], importLog: log.slice(-30) });
   };
 

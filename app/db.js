@@ -37,7 +37,7 @@
     async putPhoto(blob, kind='other'){
       const id = 'p' + Date.now() + Math.random().toString(36).slice(2,7);
       await tx('photos','readwrite', s => { s.put(blob, id); });
-      const idx = await DB.get('photoIndex', []); idx.push({ id, kind, at:new Date().toISOString(), size:blob.size || 0 }); await DB.set('photoIndex', idx);
+      const idx = await DB.get('photoIndex', []); idx.push({ id, kind, at:E.localISO(), size:blob.size || 0 }); await DB.set('photoIndex', idx);
       return id;
     },
     async getPhoto(id){ return tx('photos','readonly', s => req(s.get(id))); },
@@ -56,7 +56,7 @@
 
     /* バックアップ：JSON 1ファイル（写真を含める/含めないを選択）。APIキーなど秘密情報は含めない */
     async exportAll(includePhotos){
-      const out = { app:'karada-mission', format:2, exportedAt:new Date().toISOString(), kv:{}, photos:{}, secretsExcluded:true };
+      const out = { app:'karada-mission', format:2, exportedAt:E.localISO(), kv:{}, photos:{}, secretsExcluded:true };
       for (const k of await DB.keys()) {
         let v = await DB.get(k);
         if (k === 'settings' && v) { v = { ...v }; delete v.geminiKey; }

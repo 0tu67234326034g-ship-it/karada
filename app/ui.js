@@ -64,7 +64,7 @@
   async function favList(){ return await DB.get('favorites', []); }
 
   /* ---------------- ゲーム ---------------- */
-  const nowHM = () => new Date().toTimeString().slice(0, 5);
+  const nowHM = () => E.hm();   // 端末のローカル時刻（24時間表記）を毎回取得
   async function scoreOfDate(date){
     const d = await DB.get(dayKey(date)); if (!d) return null;
     return G.dayScore(d, targets(d));
@@ -95,7 +95,7 @@
     once('golfDay', 'golfDay', type === 'golf' && day.exerciseDone && sc.drinkDone >= 5);
     once('softDay', 'softDay', type === 'softball' && day.exerciseDone && sc.drinkDone >= 3);
     once('travelDay', 'travelDay', type === 'travel' && sc.mealsDone >= 2);
-    once('replanBack', 'replanBack', !!day.replanned && Object.values(day.meals).some(m => m.status === 'cleared' && m.clearedAt > day.replanned.at));
+    once('replanBack', 'replanBack', !!day.replanned && Object.values(day.meals).some(m => m.status === 'cleared' && E.tsOf(m.clearedTs ?? m.clearedAt) > E.tsOf(day.replanned.ts ?? day.replanned.at)));
     if (day.recovery) { const rp = G.recoveryProgress(day, tg); once('recovery', 'recovery', rp.water && rp.lunch && rp.move); }
     // 連続達成
     const pctOf = d => d === t ? sc.pct : (g.dayPct[d] ?? 0);
@@ -174,7 +174,9 @@
   function view(html, dock = ''){
     $('#app').innerHTML = `<div class="wrap">${html}</div>` + (dock ? `<div class="dock"><div class="inner">${dock}</div></div>` : '');
     document.body.classList.toggle('has-dock', !!dock);
-    window.scrollTo(0, 0);
+    App.tmp.renderedDate = E.today(); App.tmp.renderedHM = E.hm();
+    if (App.tmp.keepScroll != null) { const y = App.tmp.keepScroll; App.tmp.keepScroll = null; requestAnimationFrame(() => window.scrollTo(0, y)); }
+    else window.scrollTo(0, 0);
   }
   const go = h => { if (location.hash === h) route(); else location.hash = h; };
   App.go = go;
@@ -249,6 +251,24 @@
   }
 
   /* ================= ホーム（表メニュー） ================= */
+  /* ---------------- 食事と時間帯 ----------------
+     今の時刻と食事状況から、各食事が「いま／これから／記録だけ（時間が過ぎた）」のどれかを決める */
+  const MEAL_LATE = { breakfast:'11:00', lunch:'16:30', dinner:'24:00' };
+  const MEAL_NOW = { breakfast:['00:00','10:30'], lunch:['10:30','15:30'], dinner:['17:00','24:00'] };
+  function mealPhase(day, s, now = nowHM()){
+    const m = day.meals?.[s];
+    if (m?.status === 'cleared') return 'done';
+    if (m?.status === 'skipped') return 'skipped';
+    if (now >= MEAL_LATE[s]) return 'late';
+    const [a, b] = MEAL_NOW[s];
+    return now >= a && now < b ? 'now' : 'later';
+  }
+  /* 今いちばん優先する食事（朝食を食べずに15時なら昼食・夕食側を出す） */
+  function focusMeal(day, now = nowHM()){
+    const order = ['breakfast','lunch','dinner'];
+    return order.find(s => mealPhase(day, s, now) === 'now') || order.find(s => mealPhase(day, s, now) === 'later') || null;
+  }
+
   /* ---------------- 場所・飲み物の共通処理 ---------------- */
   /* 時間帯（朝 / 日中 / 夜）。手動で切り替えた場所は同じ時間帯の間だけ有効 */
   const period = hm => hm < (App.settings.leaveTime || '08:30') ? 'am' : hm >= (App.settings.backTime || '19:00') ? 'night' : 'day';
@@ -269,6 +289,11 @@
     let dirty = false;
     if (!day.drinks) { day.drinks = E.drinkSlots(day.schedule, App.prof); dirty = true; }
     else if (day.drinks.length && !day.drinks[0].v) { day.drinks = E.migrateDrinks(day.drinks, day.schedule, App.prof); dirty = true; }
+    if (day.date === E.today()) {   // 今日の分だけ、今の時刻で目安を再計算
+      const before = JSON.stringify(day.drinks.map(d => [d.due, d.missed]));
+      day.drinks = E.reflowDrinks(day.drinks, nowHM(), App.prof);
+      if (JSON.stringify(day.drinks.map(d => [d.due, d.missed])) !== before) dirty = true;
+    }
     if (day.recovery === undefined) {
       const y = await DB.get(dayKey(E.addDays(day.date, -1)));
       const yt = y ? targets(y) : null;
@@ -313,9 +338,9 @@
     const eaten = sumDay(day);
     const place = curPlace(day);
     const dctx = await drinkCtx(day);
-    const due = day.drinks.filter(d => !d.done && d.time <= nowHM());
-    const nextDrink = due[due.length - 1] || day.drinks.find(d => !d.done);   // 今に一番近い指令を表示（過ぎた分は一覧から）
-    const overdue = Math.max(0, due.length - 1);
+    const cur = E.currentDrink(day.drinks, nowHM());          // 今の時刻を基準に「今やる指令」か「次の目安」を決める
+    const nextDrink = cur?.slot;
+    const missedN = day.drinks.filter(d => d.missed).length;
     const slots = ['breakfast','lunch','dinner'];
     const type = day.schedule?.type;
     const wk = G.weekRank([...Array(7)].map((_, i) => { const d = E.addDays(E.today(), -i); return d === E.today() ? sc.pct : (g.dayPct[d] ?? 0); }));
@@ -323,9 +348,12 @@
     const comeback = g.activeDays.length && E.daysBetween(g.activeDays[g.activeDays.length-1], E.today()) >= 2;
     const lp = lastPlan();
     const theme = type === 'golf' ? 'theme-golf' : type === 'travel' ? 'theme-travel' : type === 'softball' ? 'theme-golf' : '';
+    const fm = focusMeal(day);
     const mealState = s => {
-      const m = day.meals[s]; const pl = day.schedule?.plan?.[s];
-      if (m?.status === 'cleared') return '<span class="done">✓ CLEAR</span>';
+      const m = day.meals[s]; const pl = day.schedule?.plan?.[s]; const ph = mealPhase(day, s);
+      if (m?.status === 'cleared') return `<span class="done">✓ ${m.clearedHM ? esc(m.clearedHM) + ' 達成' : '達成'}</span>`;
+      if (ph === 'skipped') return '<span class="tiny">なし</span>';
+      if (ph === 'late') return '<span class="tiny">記録する</span>';
       if (m?.mission && !m.mission.error) return '<span class="hot">指令あり</span>';
       return ({ home:'家ごはん', drinking:'飲み会', golf:'ゴルフ場', eatout:'外食', 'conv:seven':'セブン', 'conv:lawson':'ローソン', 'conv:famima':'ファミマ' })[pl] || '発動する';
     };
@@ -359,10 +387,12 @@
       <div class="sectlabel">現在地</div>
       <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
       <h2>本日の指令</h2>
-      <div class="grid3">${slots.map(s => `<button class="tile ${day.meals[s]?.status === 'cleared' ? 'cleared' : ''}" data-meal="${s}"><span class="em">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[s]}</span><b>${E.MEAL_LABEL[s]}</b><span class="small">${mealState(s)}</span></button>`).join('')}</div>
-      ${nextDrink ? (() => { const dt = E.drinkText(nextDrink, dctx); return `<div class="card drinkcard"><div class="kicker">💧 ${nextDrink.time} 飲み物ミッション</div><div class="dtext">${esc(dt.text)}</div>
-          <button class="btn ok drinkbtn" data-drink="${esc(nextDrink.id)}">飲んだ！</button>
-          <div class="btnrow">${coffeeBtns}<button class="btn sm ghost" onclick="App.go('#drinks')">一覧${overdue ? `（未記録${overdue}）` : ''}</button></div></div>`; })() : `<div class="okbox">💧 今日の飲み物ミッションはすべて完了！</div>`}
+      <div class="grid3">${slots.map(s => `<button class="tile ${day.meals[s]?.status === 'cleared' ? 'cleared' : ''} ${mealPhase(day, s) === 'late' || mealPhase(day, s) === 'skipped' ? 'late' : ''} ${s === fm ? 'focus' : ''}" data-meal="${s}">${s === fm ? '<span class="nowtag">いま</span>' : ''}<span class="em">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[s]}</span><b>${E.MEAL_LABEL[s]}</b><span class="small">${mealState(s)}</span></button>`).join('')}</div>
+      ${nextDrink ? (() => { const dm = E.drinkMission(nextDrink, dctx); const isNow = cur.state === 'now';
+          return `<div class="card drinkcard"><div class="kicker">💧 ${isNow ? '今の飲み物ミッション' : `次の飲み物ミッション・${nextDrink.due || nextDrink.time}ごろ`}</div><div class="dtext">${esc(isNow ? dm.text : '次は ' + (nextDrink.due || nextDrink.time) + ' ごろ：' + dm.text)}</div>
+          ${dm.late ? `<div class="tiny" style="margin:-8px 0 12px">予定 ${nextDrink.time} の分。今飲めばOK、次は今から計算し直します。</div>` : ''}
+          <button class="btn ok drinkbtn" data-drink="${esc(nextDrink.id)}">${isNow ? '飲んだ！' : '今飲んだ！'}</button>
+          <div class="btnrow">${coffeeBtns}<button class="btn sm ghost" onclick="App.go('#drinks')">一覧${missedN ? `（見送り${missedN}）` : ''}</button></div></div>`; })() : `<div class="okbox">💧 今日の飲み物ミッションはすべて完了！</div>`}
       <h2>サポート</h2>
       <div class="grid2">
         <button class="tile" onclick="App.go('#snack')"><span class="em">🆘</span><b>お助け間食</b><span class="small">気分で選ぶ</span></button>
@@ -386,6 +416,7 @@
     document.querySelectorAll('[data-meal]').forEach(b => b.onclick = () => {
       const s = b.dataset.meal; const m = day.meals[s];
       // 家ごはんの予定でまだ記録していない時は、タイルから直接カメラを起動（画面遷移なし）
+      if (mealPhase(day, s) === 'late' && !m?.mission) return go('#late/' + s);
       if (day.schedule?.plan?.[s] === 'home' && !m) {
         const p = pickPhoto();
         return p.then(async blob => { if (!blob) return; await recordHomeMeal(s, blob, ''); });
@@ -462,8 +493,11 @@
     document.querySelectorAll('[data-drink]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       const day = await getDay(); const d = day.drinks.find(x => x.id === b.dataset.drink); if (!d || d.done) return;
-      const said = E.drinkText(d, await drinkCtx(day)).text;
-      d.done = true; d.at = nowHM(); d.said = said; d.place = curPlace(day); await saveDay(day);
+      const st = E.stamp();                                   // 押した瞬間の実際の時刻
+      const said = E.drinkMission(d, { ...(await drinkCtx(day)), now: st.hm }).text;
+      d.done = true; d.doneAt = st.hm; d.doneTs = st.ts; d.doneTz = st.tz; d.at = st.hm; d.said = said; d.place = curPlace(day);
+      day.drinks = E.reflowDrinks(day.drinks, st.hm, App.prof);   // 次の目安は今から計算し直す
+      await saveDay(day);
       await award('drink', '水分補給');
       route();
     });
@@ -478,7 +512,7 @@
       const d = await getDay(); const now = nowHM();
       const sent = App.tmp.sent || (App.tmp.sent = {});
       const fire = (k, title, body) => { if (sent[k]) return; sent[k] = 1; S.notify(title, body); };
-      if (nf.drink && d.drinks) { const dr = d.drinks.find(x => !x.done && x.time <= now); if (dr) fire('dr' + dr.id, '飲み物ミッション', E.drinkText(dr, await drinkCtx(d)).text); }
+      if (nf.drink && d.drinks) { const c = E.currentDrink(E.reflowDrinks(d.drinks, now, App.prof), now); if (c?.state === 'now') fire('dr' + c.slot.id + (c.slot.due || ''), '飲み物ミッション', E.drinkMission(c.slot, await drinkCtx(d)).text); }
       if (nf.weight && !d.weightLogged && now >= (App.prof.wake || '07:00')) fire('w' + d.date, '本日の指令', '体重計に乗って記録しろ！');
       if (nf.lunch && d.meals.lunch?.status !== 'cleared' && now >= (nf.lunchTime || '12:00')) fire('l' + d.date, '昼食ミッション', '昼食ミッション発動！');
       if (nf.dinner && d.meals.dinner?.status !== 'cleared' && now >= (nf.dinnerTime || '19:00')) fire('d' + d.date, '夕食ミッション', '夕食を撮影してミッションクリア！');
@@ -583,7 +617,7 @@
     if (ns.plan.bulk && ns.plan.breakfast.startsWith('conv:')) {
       for (const slot of ['breakfast', 'lunch']) if (day.meals[slot]?.status !== 'cleared') { await issueConv(day, slot, ns.plan.breakfast.slice(5), {}); day.meals[slot].bulk = true; }
     } else if (ns.plan.breakfast?.startsWith('conv:') && !day.meals.breakfast) await issueConv(day, 'breakfast', ns.plan.breakfast.slice(5), {});
-    if (restart) day.replanned = { at: new Date().toISOString(), kind:'edit' };
+    if (restart) day.replanned = { at: E.localISO(), ts: Date.now(), kind:'edit' };
     await saveDay(day);
     // 前回の作戦として記憶（予定の種類ごと）
     const mem = { type:p.type, breakfast:p.breakfast, lunch:p.lunch, dinner:p.dinner, exercise:p.exercise, place:ns.place, bulk:!!p.bulk, golf:p.golf, softball:p.softball };
@@ -650,7 +684,7 @@
       msg = '夕食は家ごはん（撮影して記録）に切り替えました';
     }
     day.drinks = E.rebuildDrinks(day.drinks, sc, App.prof, now);
-    day.replanned = { at: new Date().toISOString(), kind };
+    day.replanned = { at: E.localISO(), ts: Date.now(), kind };
     await saveDay(day);
     toast(msg + '。残りのミッションを組み直しました');
     if (goTo.startsWith('#meal/')) App.tmp.forceChoose = !day.meals[goTo.slice(6)];
@@ -759,6 +793,7 @@
     const ms = m.mission;
     const cleared = m.status === 'cleared';
     const photo = await photoURL(m.photoId);
+    const lateNote = !cleared && mealPhase(day, slot) === 'late' ? `<div class="warnbox">いまは ${nowHM()}。${E.MEAL_LABEL[slot]}の時間は過ぎています。食べていたら撮影して記録、まだなら<a href="#late/${slot}">記録だけにする</a>こともできます。</div>` : '';
     let body = '';
     if (ms?.error) body = `<div class="warnbox">${esc(ms.error)}</div>`;
     else if (ms) {
@@ -776,8 +811,8 @@
       if (ms.kind === 'guide') body += `<button class="btn primary" id="ms-menu">📷 メニュー表を撮ってAIに選ばせる</button>${m.aiOrder ? aiOrderHTML(m.aiOrder) : ''}`;
     }
     view(`${back()}
-      ${body}
-      ${cleared ? `<div class="okbox">✅ ミッションクリア！${m.clearNote ? '　' + esc(m.clearNote) : ''}</div>${photo ? `<img class="photo" src="${photo}">` : ''}` : ''}
+      ${lateNote}${body}
+      ${cleared ? `<div class="okbox">✅ ${esc(m.clearedHM || E.fmtLocal(m.clearedAt))} ミッションクリア！${m.clearNote ? '　' + esc(m.clearNote) : ''}</div>${photo ? `<img class="photo" src="${photo}">` : ''}` : ''}
       ${!cleared && ms?.alternatives?.length ? `<details class="card"><summary><b>ほかの組み合わせ案（${ms.alternatives.length}）</b></summary><div class="tiny" style="margin:6px 0">選び直しは「気分での変更」1回として数えます。</div>${ms.alternatives.map((a, i) => `<div class="item"><div class="nm">${esc(a.cmd)}</div><div class="meta">${yen(a.sum.price)}・${Math.round(a.sum.kcal)}kcal・P${n1(a.sum.protein)}g${a.sum.complete ? '' : '・栄養不明あり'}</div><button class="btn sm" data-alt="${i}">この案にする</button></div>`).join('')}</details>` : ''}
       ${!cleared && ms && !ms.error ? `<div class="card"><b>指令を変更する</b><div class="small">理由を選んでください。「気分」だけ1日1食につき1回まで（残り${Math.max(0, 1 - (m.moodRerolls || 0))}回）。ほかは何度でもOK。</div>
         <div class="chips" style="margin-top:8px">${[['soldout','売り切れ'],['plan','予定変更'],['more','量が足りない'],['sick','体調'],['allergy','アレルギー'],['mood','気分が変わった'],['other','その他']].map(([k, l]) => `<span class="chip ${k === 'mood' && (m.moodRerolls || 0) >= 1 ? 'off' : ''}" data-re="${k}">${l}</span>`).join('')}</div></div>` : ''}
@@ -859,7 +894,7 @@
           <div class="li" data-pp="more"><span class="t">⚡ 1日の予定が変わった（飲み会・外食・出張など）</span>›</div></div>`, bg => bg.querySelectorAll('[data-pp]').forEach(el => el.onclick = async () => {
         bg.remove();
         if (el.dataset.pp === 'store') { App.tmp.forceChoose = true; return go('#mealchoose/' + slot); }
-        if (el.dataset.pp === 'home') { const d = await getDay(); if (d.schedule?.plan) d.schedule.plan[slot] = 'home'; delete d.meals[slot]; d.replanned = { at:new Date().toISOString(), kind:'home' }; await saveDay(d); return renderHomeMeal(slot); }
+        if (el.dataset.pp === 'home') { const d = await getDay(); if (d.schedule?.plan) d.schedule.plan[slot] = 'home'; delete d.meals[slot]; d.replanned = { at:E.localISO(), ts:Date.now(), kind:'home' }; await saveDay(d); return renderHomeMeal(slot); }
         replanSheet();
       }));
     }
@@ -896,16 +931,39 @@
   }
   async function clearMeal(slot, photoId, note){
     const day = await getDay(); const m = day.meals[slot];
-    m.status = 'cleared'; m.photoId = photoId || m.photoId; m.clearNote = note; m.clearedAt = new Date().toISOString();
+    m.status = 'cleared'; m.photoId = photoId || m.photoId; m.clearNote = note; { const st = E.stamp(); m.clearedAt = st.iso; m.clearedTs = st.ts; m.clearedHM = st.hm; }
     await saveDay(day);
     await award(m.homeRecord ? 'homeMeal' : 'meal', E.MEAL_LABEL[slot] + 'ミッション', { big:true, sub: m.homeRecord ? '家ごはんを記録！' : (m.mission?.storeName ? E.shortStore(m.mission.storeName) + 'の指令を完遂！' : '指令どおり！') });
     go('#home');
   }
 
+  /* 時間が過ぎた食事：指令ではなく「記録する」画面 */
+  async function renderLate(slot){
+    const day = await getDay();
+    view(`${back()}<div class="kicker">RECORD ・ ${E.MEAL_LABEL[slot]}</div><h1>${E.MEAL_LABEL[slot]}を記録する</h1>
+      <p class="small">いまは ${nowHM()}。${E.MEAL_LABEL[slot]}の時間は過ぎているので、食べていたら写真で記録だけしておこう。これからの食事は${E.MEAL_LABEL[focusMeal(day) || 'dinner']}を優先します。</p>
+      <button class="btn primary" id="lt-photo">📷 撮影して記録</button>
+      <button class="btn" id="lt-nophoto">写真なしで「食べた」と記録</button>
+      <button class="btn ghost" id="lt-skip">食べていない</button>
+      <button class="btn ghost" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">今から買う・食べに行く（指令を出す）</button>`);
+    const rec = async (blob, memo) => {
+      const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
+      const st = E.stamp();
+      Object.assign(mm, { homeRecord:true, late:true, memo, status:'cleared', clearNote:'後から記録', clearedAt:st.iso, clearedTs:st.ts, clearedHM:st.hm });
+      if (blob) mm.photoId = await DB.putPhoto(blob, 'meal');
+      await saveDay(d);
+      await award('homeMeal', E.MEAL_LABEL[slot] + 'を記録', { big:true, sub:'記録できた！' });
+      go('#home');
+    };
+    $('#lt-photo').onclick = async () => { const b = await pickPhoto(); if (b) rec(b, '後から記録'); };
+    $('#lt-nophoto').onclick = () => rec(null, '後から記録（写真なし）');
+    $('#lt-skip').onclick = async () => { const d = await getDay(); d.meals[slot] = { ...(d.meals[slot] || {}), status:'skipped', skippedAt: nowHM(), soldout:[] }; await saveDay(d); toast(`${E.MEAL_LABEL[slot]}は「なし」にしました（減点はありません）`); go('#home'); };
+  }
+
   /* 自宅の食事：撮影して記録だけ（献立は指示しない） */
   async function recordHomeMeal(slot, blob, memo){
     const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
-    mm.homeRecord = true; mm.photoId = await DB.putPhoto(blob, 'homeMeal'); mm.memo = memo || ''; mm.status = 'cleared'; mm.clearedAt = new Date().toISOString();
+    mm.homeRecord = true; mm.photoId = await DB.putPhoto(blob, 'homeMeal'); mm.memo = memo || ''; mm.status = 'cleared'; { const st = E.stamp(); mm.clearedAt = st.iso; mm.clearedTs = st.ts; mm.clearedHM = st.hm; }
     await saveDay(d);
     await award('homeMeal', E.MEAL_LABEL[slot] + '（家ごはん）', { big:true, sub:'作ってくれた料理を記録！' });
     if (await S.aiReady()) { try { const r = await S.describeMeal(blob); const d2 = await getDay(); d2.meals[slot].dishes = r.dishes; await saveDay(d2); } catch {} }
@@ -1017,8 +1075,12 @@
       <div class="sectlabel">現在地</div>
       <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
       <p class="tiny">場所に合わせて指令が変わります。飲み物のためだけに買い物はさせません。</p>
-      <div class="list card">${day.drinks.map(d => { const t = d.done && d.said ? d.said : E.drinkText(d, ctx).text; return `<div class="li"><span class="small" style="width:44px">${d.time}</span><span class="t ${d.done ? 'small' : ''}">${esc(t)}</span>${d.done ? `<span class="done">✓</span>` : `<button class="btn sm ok" data-drink="${esc(d.id)}">飲んだ！</button>`}</div>`; }).join('')}</div>
-      <h2>☕ コーヒー・カフェイン（今日 約${caf}mg・${ctx.coffeeCount}杯）</h2>
+      <div class="list card">${(() => { const cd = E.currentDrink(day.drinks, ctx.now); return day.drinks.map(d => {
+          const isCur = cd && cd.slot.id === d.id;
+          const t = d.done && d.said ? d.said.replace(/^水分補給がまだです。今、/, '') : d.missed ? '時間内に収まらず見送り（減点なし）' : E.drinkMission(d, ctx).text;
+          return `<div class="li drow ${d.done ? 'isdone' : ''} ${isCur ? 'iscur' : ''}"><span class="t"><span class="when">${esc(E.drinkHistoryLabel(d))}${isCur && cd.state === 'now' ? '<b class="nowtag">いま</b>' : ''}</span><span class="${d.done || d.missed ? 'small' : ''}">${esc(t)}</span></span>${d.done ? `<span class="done">✓</span>` : d.missed ? `<span class="tiny">—</span>` : `<button class="btn sm ok" data-drink="${esc(d.id)}">飲んだ！</button>`}</div>`; }).join(''); })()}</div>
+      <p class="tiny">時刻は「予定 → 実際に飲んだ時刻」。遅れて飲んだら、そのあとの目安は飲んだ時刻から計算し直します。</p>
+      <h2>☕ コーヒー・カフェイン</h2><p class="small" style="margin-top:-4px">今日 約${caf}mg・コーヒー${ctx.coffeeCount}杯</p>
       ${E.caffeineAdvice(caf, App.prof.sleep).map(m => `<div class="warnbox">${esc(m)}</div>`).join('')}
       <div class="card"><div class="chips">
         ${E.COFFEE_PRESETS.map((c, i) => `<span class="chip" data-cf="${i}">${c.label}</span>`).join('')}
@@ -1364,7 +1426,7 @@
       const f = await pickFile('application/json,.json'); if (!f) return;
       let info; try { info = await DB.inspectBackup(f); } catch (e) { return sheet(`<h2>このファイルは使えません</h2><div class="warnbox">${esc(e.message)}<br>データは変更していません。</div>`); }
       sheet(`<h2>復元の確認</h2><div class="list card">
-          <div class="li"><span class="t">作成日時</span><span class="small">${esc((info.exportedAt || '').replace('T', ' ').slice(0, 16))}</span></div>
+          <div class="li"><span class="t">作成日時</span><span class="small">${esc(info.exportedAt ? E.ymd(new Date(info.exportedAt)) + ' ' + E.fmtLocal(info.exportedAt) : '不明')}</span></div>
           <div class="li"><span class="t">項目数</span><b>${info.keys}</b></div><div class="li"><span class="t">記録した日数</span><b>${info.days}</b></div><div class="li"><span class="t">写真</span><b>${info.photos}枚</b></div>
           <div class="li"><span class="t">プロフィール</span><b>${info.hasProfile ? 'あり' : 'なし'}</b></div></div>
         <button class="btn" id="rs-pre">① 今のデータを先にバックアップ（おすすめ）</button>
@@ -1456,7 +1518,7 @@
     const keys = await DB.photoKeys();
     const idx = await DB.get('photoIndex', []);
     const meta = new Map(idx.map(x => [x.id, x]));
-    const items = keys.map(id => meta.get(id) || { id, kind:'other', at:null }).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    const items = keys.map(id => meta.get(id) || { id, kind:'other', at:null }).sort((a, b) => E.tsOf(b.at) - E.tsOf(a.at));
     const sel = App.tmp.photoSel || (App.tmp.photoSel = new Set());
     const shown = items.slice(0, 60);
     const urls = await Promise.all(shown.map(x => photoURL(x.id)));
@@ -1466,7 +1528,7 @@
         <span class="chip" data-old="30:meal,homeMeal,menu,scale,vending,other">30日より前の食事・メニュー・体重計の写真</span>
         <span class="chip" data-old="90:meal,homeMeal,menu,scale,vending,other">90日より前（全身写真以外）</span></div>
         <p class="tiny">全身写真は自動では消しません。体重の記録自体は写真を消しても残ります。</p></div>
-      <div class="thumbs">${shown.map((x, i) => `<div class="thumb ${sel.has(x.id) ? 'sel' : ''}" data-ph="${x.id}">${urls[i] ? `<img src="${urls[i]}">` : ''}<div class="cap">${KIND[x.kind] || 'その他'}・${x.at ? x.at.slice(5, 10) : '日付不明'}</div></div>`).join('')}</div>
+      <div class="thumbs">${shown.map((x, i) => `<div class="thumb ${sel.has(x.id) ? 'sel' : ''}" data-ph="${x.id}">${urls[i] ? `<img src="${urls[i]}">` : ''}<div class="cap">${KIND[x.kind] || 'その他'}・${x.at ? E.fmtLocal(x.at, true) : '日付不明'}</div></div>`).join('')}</div>
       ${items.length > 60 ? `<p class="tiny">新しい順に60枚まで表示しています。</p>` : ''}`,
       sel.size ? `<button class="btn" id="ph-clear" style="flex:1">選択解除</button><button class="btn primary" id="ph-del" style="flex:2;background:var(--ng);color:#fff">${sel.size}枚を削除</button>` : '');
     document.querySelectorAll('[data-ph]').forEach(el => el.onclick = () => { const id = el.dataset.ph; sel.has(id) ? sel.delete(id) : sel.add(id); renderPhotos(); });
@@ -1474,8 +1536,8 @@
     const d = $('#ph-del'); if (d) d.onclick = async () => { if (!confirm(`${sel.size}枚の写真を削除します。元に戻せません。`)) return; for (const id of sel) await DB.delPhoto(id); toast(`${sel.size}枚削除しました`); sel.clear(); renderPhotos(); };
     document.querySelectorAll('[data-old]').forEach(b => b.onclick = async () => {
       const [days, kinds] = b.dataset.old.split(':'); const ks = kinds.split(',');
-      const limit = new Date(Date.now() - (+days) * 864e5).toISOString();
-      const targets = items.filter(x => x.at && x.at < limit && ks.includes(x.kind));
+      const limit = Date.now() - (+days) * 864e5;
+      const targets = items.filter(x => x.at && E.tsOf(x.at) < limit && ks.includes(x.kind));
       if (!targets.length) return toast('対象の写真はありません');
       if (!confirm(`${targets.length}枚を削除します。元に戻せません。先にバックアップを取ることをおすすめします。`)) return;
       for (const x of targets) await DB.delPhoto(x.id); toast(`${targets.length}枚削除しました`); renderPhotos();
@@ -1501,15 +1563,43 @@
     const [path, q] = h.split('?');
     const [name, arg] = path.slice(1).split('/');
     const R = { home:renderHome, setup:renderSetup, morning:renderMorning, meal:() => renderMeal(arg), mealchoose:() => { App.tmp.forceChoose = true; renderMeal(arg); }, bulk:renderBulk, snack:renderSnack, drinks:renderDrinks, train:renderTrain, body:renderBody, nearby:renderNearby,
-      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, places: renderPlaces };
+      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, late: () => renderLate(arg), places: renderPlaces };
     try { await (R[name] || renderHome)(); } catch (e) { console.error(e); view(`<div class="warnbox">エラー：${esc(e.message)}</div><button class="btn" onclick="App.go('#home')">ホームへ</button>`); }
   }
   App.route = route;
+
+  /* 画面の内容が今の時刻とずれていたら描き直す（入力中・シート表示中は邪魔しない） */
+  async function timeSync(force){
+    if (!App.prof) return;
+    const today = E.today();
+    const h = (location.hash || '#home').split('?')[0];
+    const busy = document.querySelector('.sheet-bg, .fx') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+    if (App.tmp.renderedDate && App.tmp.renderedDate !== today) {   // 0:00を過ぎた・タイムゾーンが変わって日付が変わった
+      App.tmp.sent = {};
+      if (busy && !force) return;
+      document.querySelectorAll('.sheet-bg').forEach(x => x.remove());
+      return go('#home');
+    }
+    if (!['#home', '#drinks'].includes(h) || (busy && !force)) return;
+    const day = await getDay();
+    const key = JSON.stringify([E.currentDrink(E.reflowDrinks(day.drinks || [], E.hm(), App.prof), E.hm())?.slot?.id, E.currentDrink(E.reflowDrinks(day.drinks || [], E.hm(), App.prof), E.hm())?.state, ['breakfast','lunch','dinner'].map(s2 => mealPhase(day, s2))]);
+    if (force || key !== App.tmp.timeKey || E.hm().slice(0, 4) !== (App.tmp.renderedHM || '').slice(0, 4)) {
+      App.tmp.timeKey = key; App.tmp.keepScroll = window.scrollY; route();
+    }
+  }
+  App.timeSync = timeSync;
 
   async function start(){
     try { await loadData(); } catch (e) { $('#app').innerHTML = `<div class="wrap"><div class="warnbox">商品データを読み込めませんでした。インターネットに接続してもう一度開いてください。</div></div>`; return; }
     await loadState();
     window.addEventListener('hashchange', route);
+    /* 時刻の追従：アプリに戻った時・PWA再表示・30秒ごとに、端末の現在時刻を取り直す。
+       日付が変わっていたら新しい1日として表示し直す（前に開いた時刻は使わない） */
+    const back2app = () => { if (document.visibilityState !== 'hidden') timeSync(true); };
+    document.addEventListener('visibilitychange', back2app);
+    window.addEventListener('pageshow', back2app);
+    window.addEventListener('focus', back2app);
+    setInterval(() => timeSync(false), 30000);
     // 年に1度ストレージ消去されないよう永続化を要求（Safari）
     if (navigator.storage?.persist) navigator.storage.persist();
     route();

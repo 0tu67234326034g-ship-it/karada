@@ -274,3 +274,13 @@ pre.code{white-space:pre-wrap;word-break:break-all;background:var(--bg2);border:
 .wrow b{display:block;font-size:13px}
 .dayrow.perfect{border-color:rgba(241,217,162,.5)}
 .dock .btn{padding:0 12px;min-width:0}
+/* ===== v5：時刻連動 ===== */
+.nowtag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.08em;color:#1a1306;background:var(--gold2);border-radius:99px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+.tile .nowtag{position:absolute;top:10px;right:10px;margin:0}
+.tile.focus{border-color:var(--gold);box-shadow:0 0 0 1px rgba(217,180,106,.35) inset,0 0 18px rgba(217,180,106,.12)}
+.tile.late{opacity:.62}
+.tile.late .em{filter:grayscale(.6)}
+.drow .t{display:flex;flex-direction:column;gap:2px}
+.drow .when{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.drow.isdone .when{color:var(--ok)}
+.drow.iscur{background:linear-gradient(90deg,rgba(111,168,255,.08),transparent);margin:0 -16px;padding-left:16px;padding-right:16px}

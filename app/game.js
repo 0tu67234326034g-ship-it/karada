@@ -90,7 +90,7 @@
     ] };
   };
   G.recoveryProgress = (day, t) => {
-    const amWater = (day.drinks || []).filter(d => d.done && (d.at || d.time) < '12:00').length;
+    const amWater = (day.drinks || []).filter(d => d.done && (d.doneAt || d.at || d.time) < '12:00').length;   // 実際に飲んだ時刻で判定
     const sc = G.dayScore(day, t);
     return { water: amWater >= 2, lunch: day.meals?.lunch?.status === 'cleared', move: sc.parts.move >= 1 || (day.training || []).length > 0 };
   };

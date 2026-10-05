@@ -2,7 +2,25 @@
 (function(){
   const E = {};
 
-  /* ---------- 日付 ---------- */
+  /* ---------- 日付・時刻 ----------
+     すべて端末のローカル時刻（iPhoneの設定タイムゾーン）を、その都度 new Date() で取得する。
+     UTC（toISOString）は保存・表示に使わない。時刻表示は24時間表記 HH:MM。 */
+  const z2 = n => String(n).padStart(2, '0');
+  E.now = () => new Date();
+  E.hm = (d = new Date()) => `${z2(d.getHours())}:${z2(d.getMinutes())}`;
+  E.tzOffset = (d = new Date()) => -d.getTimezoneOffset();                  // 分（日本は +540）
+  E.localISO = (d = new Date()) => { const o = E.tzOffset(d), s = o >= 0 ? '+' : '-', a = Math.abs(o);
+    return `${d.getFullYear()}-${z2(d.getMonth()+1)}-${z2(d.getDate())}T${z2(d.getHours())}:${z2(d.getMinutes())}:${z2(d.getSeconds())}${s}${z2(Math.floor(a/60))}:${z2(a%60)}`; };
+  /* 実行した瞬間の記録（表示用の時刻・日付と、並べ替え用の数値を両方持つ） */
+  E.stamp = (d = new Date()) => ({ ts: d.getTime(), hm: E.hm(d), date: E.ymd(d), tz: E.tzOffset(d), iso: E.localISO(d) });
+  /* 保存済みの時刻（数値・ISO・旧形式）を端末のローカル時刻で表示 */
+  E.fmtLocal = (v, withDate = false) => {
+    if (v == null || v === '') return '';
+    if (typeof v === 'string' && /^\d{2}:\d{2}$/.test(v)) return v;
+    const d = new Date(v); if (isNaN(d)) return String(v);
+    return (withDate ? `${d.getMonth()+1}/${d.getDate()} ` : '') + E.hm(d);
+  };
+  E.tsOf = v => v == null ? 0 : typeof v === 'number' ? v : (Date.parse(v) || 0);
   E.today = () => E.ymd(new Date());
   E.ymd = d => { const z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; };
   E.addDays = (ymd, n) => { const d = new Date(ymd+'T12:00:00'); d.setDate(d.getDate()+n); return E.ymd(d); };
@@ -428,7 +446,8 @@
     }
     if (sched?.plan?.dinner === 'drinking') add('18:40', 'predrink', 250);
     add('19:30', 'meal', 200, { meal:'dinner' });
-    add(addMin(sleep, -90), 'night', 100);
+    let night = addMin(sleep, -90); if (toMin(night) < toMin(wake)) night = '23:30';   // 就寝が0時過ぎの人
+    add(night, 'night', 100);
     return L.sort((a, b) => a.time.localeCompare(b.time));
   };
   E.drinkPlan = (sched, prof) => E.drinkSlots(sched, prof); // 互換
@@ -489,19 +508,78 @@
     }
     return general(false);
   };
-  /* 旧形式（文言固定）の枠を新形式に移行。完了状態は時刻で引き継ぐ */
+  /* 予定変更：完了済み・期限切れの枠は残し、これからの枠だけ作り直す（予定時刻は time、実績は doneAt） */
+  E.rebuildDrinks = (cur, sched, prof, now) => {
+    const keep = (cur || []).filter(d => d.done || d.missed || (d.due || d.time) < now);
+    const fresh = E.drinkSlots(sched, prof).filter(d => d.time >= now && !keep.some(k => k.time === d.time && k.kind === d.kind));
+    return E.reflowDrinks([...keep, ...fresh], now, prof);
+  };
+
+  /* ---------- 予定時刻と実績時刻 ----------
+     slot.time  = 予定時刻（作戦開始時に決めた時刻。変えない）
+     slot.due   = 今の目安時刻（最後に実際に飲んだ時刻から再計算）
+     slot.doneAt / doneTs = 「飲んだ！」を押した実際の時刻（端末のローカル時刻）
+     slot.missed = 1日の終わりまでに収まらず見送った枠 */
+  E.drinkGap = (slot) => ({ round:35, play:25, salt:30, post:20, pre:20, meal:45, predrink:30 })[slot.kind] ?? 60;
+  E.reflowDrinks = (slots, now, prof) => {
+    const L = (slots || []).map(s => ({ ...s })).sort((a, b) => a.time.localeCompare(b.time));
+    const sleep = prof?.sleep || '23:30';
+    const cutoff = toMin(sleep) > toMin('03:00') ? Math.min(toMin(sleep) - 15, 24 * 60 - 1) : 24 * 60 - 1;
+    let anchor = null;                                   // 直前の「実績 or 目安」時刻（今のタイムゾーンでの0時からの分）
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    for (const s of L) {
+      if (s.done) {
+        // 実際に押した瞬間（絶対時刻）を今の現地時刻に直して使う。時差移動しても次の目安が過去に戻らない
+        const t = s.doneTs ? (s.doneTs - midnight.getTime()) / 60000 : toMin(s.doneAt || s.at || s.time);
+        anchor = anchor == null ? t : Math.max(anchor, t); s.due = s.doneAt || s.at || s.time; continue;
+      }
+      if (s.missed) continue;
+      let due = toMin(s.time);
+      if (anchor != null) due = Math.max(due, anchor + E.drinkGap(s));
+      if (due > cutoff) { s.missed = true; s.due = null; continue; }
+      s.due = fromMin(due); anchor = due;
+    }
+    return L;
+  };
+  function fromMin(m){ m = Math.max(0, Math.min(24 * 60 - 1, Math.round(m))); return `${z2(Math.floor(m / 60))}:${z2(m % 60)}`; }
+  E.fromMin = fromMin;
+  /* 今表示する飲み物ミッション：目安時刻を過ぎた最初の未達枠（なければ次の枠） */
+  E.currentDrink = (slots, now) => {
+    const open = (slots || []).filter(s => !s.done && !s.missed);
+    const due = open.filter(s => (s.due || s.time) <= now);
+    if (due.length) return { slot: due[0], state: 'now', late: toMin(now) - toMin(due[0].time), pending: due.length };
+    return open.length ? { slot: open[0], state: 'next', late: 0, pending: 0 } : null;
+  };
+  /* 表示用の指令文：予定時刻を過ぎていたら「今」を基準にした文に切り替える */
+  E.drinkMission = (slot, ctx) => {
+    const now = ctx.now || E.hm();
+    const late = toMin(now) - toMin(slot.time);
+    const shifted = slot.due && toMin(slot.due) - toMin(slot.time) >= 45;
+    // 起床・食事の枠が大きく遅れた時は「起きたら」「朝食と一緒に」をやめて、今いる場所の指令にする
+    let s = slot;
+    if ((slot.kind === 'wake' && late >= 60) || (slot.kind === 'meal' && (late >= 75 || shifted)) || (slot.kind === 'pre' && late >= 45) || (slot.kind === 'predrink' && late >= 60))
+      s = { ...slot, kind: slot.kind === 'meal' && ctx.meals?.[slot.meal]?.status !== 'cleared' && late < 120 ? 'meal' : 'pm' };
+    const base = E.drinkText(s, ctx).text;
+    if ((slot.due || slot.time) <= now && late >= 30) return { text: '水分補給がまだです。今、' + base.replace(/^[^：]*：/, ''), late:true };
+    return { text: base, late:false };
+  };
+  /* 履歴の表示：「予定15:00 → 16:55達成」 */
+  E.tzLabel = off => { const h = off / 60; return 'UTC' + (h >= 0 ? '+' : '') + (Number.isInteger(h) ? h : h.toFixed(1)); };
+  E.drinkHistoryLabel = s => {
+    if (s.done) {
+      const at = s.doneAt || s.at;
+      const tz = s.doneTz != null && s.doneTz !== E.tzOffset() ? `（${s.doneTz === 540 ? '日本時間' : E.tzLabel(s.doneTz)}）` : '';
+      return at && at !== s.time ? `予定${s.time} → ${at}${tz}達成` : `${at || s.time}${tz}達成`;
+    }
+    if (s.missed) return `予定${s.time} → 見送り`;
+    return s.due && s.due !== s.time ? `予定${s.time} → ${s.due}ごろ` : `${s.time}ごろ`;
+  };
+  /* 旧形式（文言固定）の枠を新形式に移行。完了状態は引き継ぐ */
   E.migrateDrinks = (old, sched, prof) => {
     const fresh = E.drinkSlots(sched, prof);
-    const doneTimes = (old || []).filter(d => d.done).map(d => d.time).sort();
-    let k = 0;
-    for (const f of fresh) if (k < doneTimes.length && f.time <= (doneTimes[doneTimes.length - 1] || '00:00')) { f.done = true; f.at = (old.find(d => d.done && d.time === doneTimes[k]) || {}).at || null; k++; }
+    const done = (old || []).filter(d => d.done).sort((a, b) => a.time.localeCompare(b.time));
+    for (let k = 0; k < done.length && k < fresh.length; k++) { fresh[k].done = true; fresh[k].doneAt = done[k].at || done[k].time; }
     return fresh;
-  };
-  /* 予定変更：今より前の枠と完了済みは残し、これからの枠だけ作り直す */
-  E.rebuildDrinks = (cur, sched, prof, now) => {
-    const keep = (cur || []).filter(d => d.done || d.time < now);
-    const fresh = E.drinkSlots(sched, prof).filter(d => d.time >= now && !keep.some(k => k.time === d.time && k.kind === d.kind));
-    return [...keep, ...fresh].sort((a, b) => a.time.localeCompare(b.time));
   };
   function addMin(hhmm, m){ const [h, mi] = hhmm.split(':').map(Number); let t = h*60 + mi + m; t = (t + 1440) % 1440; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; }
   E.addMin = addMin;
