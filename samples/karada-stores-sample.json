@@ -1,0 +1,87 @@
+{
+  "format": "karada-data",
+  "version": 1,
+  "generatedBy": "ChatGPT",
+  "generatedAt": "2026-10-05",
+  "stores": [
+    {
+      "id": "tenya",
+      "name": "天丼てんや",
+      "type": "chain",
+      "genre": "牛丼・定食",
+      "aliases": [
+        "天丼てんや",
+        "てんや",
+        "Tenya"
+      ],
+      "address": null,
+      "lat": null,
+      "lon": null,
+      "officialUrl": "https://（公式メニューページのURL）",
+      "verifiedAt": "2026-10-05",
+      "items": [
+        {
+          "id": "tenya-yasai-tendon-nami",
+          "name": "野菜天丼",
+          "size": "並",
+          "category": "main",
+          "priceYen": null,
+          "nutrition": {
+            "kcal": null,
+            "protein": null,
+            "fat": null,
+            "carbs": null,
+            "salt": null
+          },
+          "allergens": {
+            "status": "unknown",
+            "contains": []
+          },
+          "officialUrl": null,
+          "verifiedAt": "2026-10-05",
+          "status": "active",
+          "limited": false,
+          "note": "例：公式で確認できない値は null のまま"
+        }
+      ]
+    },
+    {
+      "id": "local-ekimae-shokudo",
+      "name": "駅前食堂",
+      "type": "local",
+      "genre": "個人店",
+      "aliases": [
+        "駅前食堂"
+      ],
+      "address": "○○市○○町1-2-3",
+      "lat": 35,
+      "lon": 139,
+      "officialUrl": null,
+      "verifiedAt": "2026-10-05",
+      "items": [
+        {
+          "id": "saba-teishoku",
+          "name": "さば塩焼き定食",
+          "size": null,
+          "category": "main",
+          "priceYen": 900,
+          "nutrition": {
+            "kcal": null,
+            "protein": null,
+            "fat": null,
+            "carbs": null,
+            "salt": null
+          },
+          "allergens": {
+            "status": "unknown",
+            "contains": []
+          },
+          "officialUrl": null,
+          "verifiedAt": "2026-10-05",
+          "status": "active"
+        }
+      ]
+    }
+  ],
+  "products": []
+}

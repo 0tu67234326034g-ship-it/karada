@@ -1,0 +1,992 @@
+{
+ "version": "2026-10-04",
+ "convenience": [
+  {
+   "id": "seven",
+   "name": "セブン-イレブン",
+   "aliases": [
+    "セブン-イレブン",
+    "セブンイレブン",
+    "7-Eleven",
+    "Seven-Eleven",
+    "7-eleven"
+   ]
+  },
+  {
+   "id": "lawson",
+   "name": "ローソン",
+   "aliases": [
+    "ローソン",
+    "Lawson",
+    "LAWSON",
+    "ナチュラルローソン",
+    "ローソンストア100"
+   ]
+  },
+  {
+   "id": "famima",
+   "name": "ファミリーマート",
+   "aliases": [
+    "ファミリーマート",
+    "FamilyMart",
+    "Family Mart",
+    "ファミマ"
+   ]
+  }
+ ],
+ "chains": [
+  {
+   "id": "yoshinoya",
+   "name": "吉野家",
+   "genre": "牛丼・定食",
+   "aliases": [
+    "吉野家",
+    "Yoshinoya",
+    "yoshinoya"
+   ],
+   "officialUrl": "https://www.yoshinoya.com/menu/",
+   "items": [
+    {
+     "id": "yoshinoya-gyudon-nami",
+     "name": "牛丼",
+     "size": "並盛",
+     "priceYen": 498,
+     "nutrition": {
+      "kcal": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.yoshinoya.com/menu/gyudon",
+     "note": "栄養成分は公式サイトで取得できず未登録",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "yoshinoya-gyuzara-teishoku",
+     "name": "牛皿定食",
+     "size": null,
+     "priceYen": 789,
+     "nutrition": {
+      "kcal": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "牛",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.yoshinoya.com/menu/set",
+     "note": "栄養成分未登録",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "yoshinoya-gyusake",
+     "name": "牛鮭定食",
+     "size": null,
+     "priceYen": 844,
+     "nutrition": {
+      "kcal": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "牛",
+      "魚",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.yoshinoya.com/menu/set",
+     "note": "栄養成分未登録",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "yoshinoya-gyusaba",
+     "name": "牛さば定食",
+     "size": null,
+     "priceYen": 844,
+     "nutrition": {
+      "kcal": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "牛",
+      "魚",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.yoshinoya.com/menu/set",
+     "note": "栄養成分未登録",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "yoshinoya-oniporon",
+     "name": "鬼おろしポン酢牛丼",
+     "size": "並盛",
+     "priceYen": 660,
+     "nutrition": {
+      "kcal": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.yoshinoya.com/menu/gyudon",
+     "note": "栄養成分未登録",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    }
+   ],
+   "dataNote": null
+  },
+  {
+   "id": "sukiya",
+   "name": "すき家",
+   "genre": "牛丼・定食",
+   "aliases": [
+    "すき家",
+    "Sukiya",
+    "sukiya"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式の栄養成分PDF（2026/9/29更新）はあるが、表の読み取りで列の対応が確認できなかったため未登録。"
+  },
+  {
+   "id": "matsuya",
+   "name": "松屋",
+   "genre": "牛丼・定食",
+   "aliases": [
+    "松屋",
+    "Matsuya",
+    "matsuya"
+   ],
+   "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/",
+   "items": [
+    {
+     "id": "matsuya-gyumeshi-ko",
+     "name": "牛めし",
+     "size": "小盛",
+     "priceYen": 430,
+     "nutrition": {
+      "kcal": 507,
+      "protein": 13.1,
+      "fat": 22.8,
+      "carbs": 59.6,
+      "salt": 2.6
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/gyumeshi/gyumeshi_hp_250422.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-gyumeshi-nami",
+     "name": "牛めし",
+     "size": "並盛",
+     "priceYen": 460,
+     "nutrition": {
+      "kcal": 687,
+      "protein": 17.1,
+      "fat": 28.9,
+      "carbs": 85.5,
+      "salt": 3.0
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/gyumeshi/gyumeshi_hp_250422.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-gyumeshi-atama",
+     "name": "牛めし",
+     "size": "あたま大盛",
+     "priceYen": 630,
+     "nutrition": {
+      "kcal": 765,
+      "protein": 19.8,
+      "fat": 35.6,
+      "carbs": 87.2,
+      "salt": 3.5
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/gyumeshi/gyumeshi_hp_250422.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-oniponzu-nami",
+     "name": "鬼おろしポン酢牛めし",
+     "size": "並盛",
+     "priceYen": 560,
+     "nutrition": {
+      "kcal": 714,
+      "protein": 18.3,
+      "fat": 29.1,
+      "carbs": 90.8,
+      "salt": 4.5
+     },
+     "role": "main",
+     "tags": [
+      "牛"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/gyumeshi/gyu_onioroshi_hp_250422.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-aburisake",
+     "name": "“炙り”焼鮭定食",
+     "size": null,
+     "priceYen": 800,
+     "nutrition": {
+      "kcal": 698,
+      "protein": 25.7,
+      "fat": 24,
+      "carbs": 91,
+      "salt": 5.6
+     },
+     "role": "main",
+     "tags": [
+      "魚",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/teishoku/tei_aburi_sake_hp_250422.html",
+     "note": "店内飲食のみ。みそ汁付き",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-porkloin",
+     "name": "豚ロース焼肉定食",
+     "size": null,
+     "priceYen": 790,
+     "nutrition": {
+      "kcal": 736,
+      "protein": 27.9,
+      "fat": 28.9,
+      "carbs": 88.7,
+      "salt": 3.0
+     },
+     "role": "main",
+     "tags": [
+      "豚",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/teishoku/tei_porkloin_hp_260630.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-gyuyaki",
+     "name": "牛焼肉定食",
+     "size": null,
+     "priceYen": 890,
+     "nutrition": {
+      "kcal": 806,
+      "protein": 23.3,
+      "fat": 41.3,
+      "carbs": 86.5,
+      "salt": 2.3
+     },
+     "role": "main",
+     "tags": [
+      "牛",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/teishoku/tei_gyuuyaki_hp_250422.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "matsuya-shogayaki",
+     "name": "生姜焼き定食",
+     "size": null,
+     "priceYen": 850,
+     "nutrition": {
+      "kcal": 952,
+      "protein": 30.8,
+      "fat": 43.8,
+      "carbs": 106.4,
+      "salt": 6.4
+     },
+     "role": "main",
+     "tags": [
+      "豚",
+      "定食"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/teishoku/tei_shougayaki_hp_260707.html",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    }
+   ],
+   "dataNote": null
+  },
+  {
+   "id": "yayoiken",
+   "name": "やよい軒",
+   "genre": "牛丼・定食",
+   "aliases": [
+    "やよい軒",
+    "Yayoiken",
+    "yayoiken"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "ootoya",
+   "name": "大戸屋",
+   "genre": "牛丼・定食",
+   "aliases": [
+    "大戸屋",
+    "Ootoya",
+    "OOTOYA",
+    "ootoya"
+   ],
+   "officialUrl": "https://www.ootoya.com/menu/",
+   "items": [],
+   "dataNote": "公式メニューは店舗選択後に表示される仕組みで取得できず。"
+  },
+  {
+   "id": "sushiro",
+   "name": "スシロー",
+   "genre": "寿司",
+   "aliases": [
+    "スシロー",
+    "Sushiro",
+    "sushiro"
+   ],
+   "officialUrl": "https://www.akindo-sushiro.co.jp/menu/",
+   "items": [],
+   "sushi": true,
+   "dataNote": "公式メニューは店舗選択後に表示。栄養成分未取得。"
+  },
+  {
+   "id": "kurasushi",
+   "name": "くら寿司",
+   "genre": "寿司",
+   "aliases": [
+    "くら寿司",
+    "Kura Sushi",
+    "kura sushi",
+    "無添くら寿司"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "sushi": true,
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "hamasushi",
+   "name": "はま寿司",
+   "genre": "寿司",
+   "aliases": [
+    "はま寿司",
+    "Hama Sushi",
+    "hamazushi"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "sushi": true,
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "kappasushi",
+   "name": "かっぱ寿司",
+   "genre": "寿司",
+   "aliases": [
+    "かっぱ寿司",
+    "Kappa Sushi",
+    "kappa sushi"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "sushi": true,
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "ohsho",
+   "name": "餃子の王将",
+   "genre": "中華・麺類",
+   "aliases": [
+    "餃子の王将",
+    "王将",
+    "Gyoza no Ohsho",
+    "Ohsho"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "hidakaya",
+   "name": "日高屋",
+   "genre": "中華・麺類",
+   "aliases": [
+    "日高屋",
+    "Hidakaya",
+    "熱烈中華食堂 日高屋"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "bamiyan",
+   "name": "バーミヤン",
+   "genre": "中華・麺類",
+   "aliases": [
+    "バーミヤン",
+    "Bamiyan"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "marugame",
+   "name": "丸亀製麺",
+   "genre": "中華・麺類",
+   "aliases": [
+    "丸亀製麺",
+    "Marugame Seimen",
+    "Marugame"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "gusto",
+   "name": "ガスト",
+   "genre": "ファミレス・カレー",
+   "aliases": [
+    "ガスト",
+    "Gusto",
+    "すかいらーく"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "saizeriya",
+   "name": "サイゼリヤ",
+   "genre": "ファミレス・カレー",
+   "aliases": [
+    "サイゼリヤ",
+    "Saizeriya"
+   ],
+   "officialUrl": "https://www.saizeriya.co.jp/menu/",
+   "items": [],
+   "dataNote": "公式メニューは電子ブック形式で数値を自動取得できず。"
+  },
+  {
+   "id": "cocos",
+   "name": "ココス",
+   "genre": "ファミレス・カレー",
+   "aliases": [
+    "ココス",
+    "COCO'S",
+    "Coco's",
+    "cocos"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "dennys",
+   "name": "デニーズ",
+   "genre": "ファミレス・カレー",
+   "aliases": [
+    "デニーズ",
+    "Denny's",
+    "Dennys"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "cocoichi",
+   "name": "CoCo壱番屋",
+   "genre": "ファミレス・カレー",
+   "aliases": [
+    "CoCo壱番屋",
+    "ココイチ",
+    "CoCo Ichibanya",
+    "カレーハウスCoCo壱番屋"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "mcdonalds",
+   "name": "マクドナルド",
+   "genre": "ファストフード・カフェ",
+   "aliases": [
+    "マクドナルド",
+    "McDonald's",
+    "Mcdonalds",
+    "マック"
+   ],
+   "officialUrl": "https://www.mcdonalds.co.jp/menu/",
+   "items": [
+    {
+     "id": "mcd-1250",
+     "name": "マックチキン",
+     "size": null,
+     "priceYen": 190,
+     "nutrition": {
+      "kcal": 386,
+      "protein": 13.5,
+      "fat": 19.6,
+      "carbs": 39.5,
+      "salt": 2.1
+     },
+     "role": "main",
+     "tags": [
+      "鶏"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://www.mcdonalds.co.jp/products/1250/",
+     "note": "価格は「190円〜」（店舗により異なる）",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    }
+   ],
+   "dataNote": null
+  },
+  {
+   "id": "mos",
+   "name": "モスバーガー",
+   "genre": "ファストフード・カフェ",
+   "aliases": [
+    "モスバーガー",
+    "MOS BURGER",
+    "Mos Burger"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  },
+  {
+   "id": "subway",
+   "name": "サブウェイ",
+   "genre": "ファストフード・カフェ",
+   "aliases": [
+    "サブウェイ",
+    "SUBWAY",
+    "Subway"
+   ],
+   "officialUrl": "https://subway.co.jp/menu/",
+   "items": [
+    {
+     "id": "subway-saladchicken",
+     "name": "サラダチキン",
+     "size": "レギュラー",
+     "priceYen": 550,
+     "nutrition": {
+      "kcal": 281,
+      "protein": 21.2,
+      "fat": 2.8,
+      "carbs": 44.1,
+      "salt": 2.2
+     },
+     "role": "main",
+     "tags": [
+      "鶏"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/salad-chicken-sandwich/",
+     "note": "標準：ハニーオーツ＋はちみつマスタード",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-zakutaru-chicken",
+     "name": "ザクタルグリルチキン",
+     "size": "レギュラー",
+     "priceYen": 680,
+     "nutrition": {
+      "kcal": 371,
+      "protein": 19,
+      "fat": 14.2,
+      "carbs": 43.1,
+      "salt": 2.9
+     },
+     "role": "main",
+     "tags": [
+      "鶏"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/zakutaru-grilled-chicken/",
+     "note": "標準：ホワイトブレッド",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-zakutaru-ebi",
+     "name": "ザクタルえびブロッコリー",
+     "size": "レギュラー",
+     "priceYen": 650,
+     "nutrition": {
+      "kcal": 304,
+      "protein": 12.4,
+      "fat": 10,
+      "carbs": 42.4,
+      "salt": 2.4
+     },
+     "role": "main",
+     "tags": [
+      "えび"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/zakutaru-shrimp-broccoli/",
+     "note": "標準：ホワイトブレッド",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-veggie",
+     "name": "ベジーデライト",
+     "size": "レギュラー",
+     "priceYen": 430,
+     "nutrition": {
+      "kcal": 215,
+      "protein": 7.2,
+      "fat": 4.4,
+      "carbs": 38,
+      "salt": 1.5
+     },
+     "role": "main",
+     "tags": [
+      "野菜"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/veggie-delight/",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-ham",
+     "name": "ハム",
+     "size": "レギュラー",
+     "priceYen": 480,
+     "nutrition": {
+      "kcal": 260,
+      "protein": 12.4,
+      "fat": 6.4,
+      "carbs": 40,
+      "salt": 2.1
+     },
+     "role": "main",
+     "tags": [
+      "豚"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/ham-sandwich/",
+     "note": null,
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-egg",
+     "name": "たまご",
+     "size": "レギュラー",
+     "priceYen": 500,
+     "nutrition": {
+      "kcal": 318,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "卵"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/egg-sandwich/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-tuna",
+     "name": "ツナ",
+     "size": "レギュラー",
+     "priceYen": 490,
+     "nutrition": {
+      "kcal": 350,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "魚"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/tuna-sandwich/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-avocado",
+     "name": "アボカドベジー",
+     "size": "レギュラー",
+     "priceYen": 520,
+     "nutrition": {
+      "kcal": 295,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "野菜"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/avocado-veggie/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-chili",
+     "name": "チリチキン",
+     "size": "レギュラー",
+     "priceYen": 550,
+     "nutrition": {
+      "kcal": 273,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "鶏"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/chili-chicken-sandwich/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-blt",
+     "name": "BLT",
+     "size": "レギュラー",
+     "priceYen": 560,
+     "nutrition": {
+      "kcal": 335,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "豚"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/blt/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-teriyaki",
+     "name": "てり焼きチキン",
+     "size": "レギュラー",
+     "priceYen": 580,
+     "nutrition": {
+      "kcal": 346,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "鶏"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/teriyaki-chicken-sandwich/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-ebitama",
+     "name": "えびたま",
+     "size": "レギュラー",
+     "priceYen": 570,
+     "nutrition": {
+      "kcal": 321,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "えび",
+      "卵"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/ebitama/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-ebiavo",
+     "name": "えびアボカド",
+     "size": "レギュラー",
+     "priceYen": 630,
+     "nutrition": {
+      "kcal": 319,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "えび"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/ebi-avocado/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    },
+    {
+     "id": "subway-zakutaru-ham",
+     "name": "ザクタルハム",
+     "size": "レギュラー",
+     "priceYen": 620,
+     "nutrition": {
+      "kcal": 337,
+      "protein": null,
+      "fat": null,
+      "carbs": null,
+      "salt": null
+     },
+     "role": "main",
+     "tags": [
+      "豚"
+     ],
+     "verifiedAt": "2026-10-04",
+     "officialUrl": "https://subway.co.jp/menu/zakutaru-ham/",
+     "note": "公式一覧のkcalのみ確認",
+     "limited": false,
+     "status": "active",
+     "source": "official"
+    }
+   ],
+   "dataNote": null
+  },
+  {
+   "id": "starbucks",
+   "name": "スターバックス",
+   "genre": "ファストフード・カフェ",
+   "aliases": [
+    "スターバックス",
+    "Starbucks",
+    "スタバ",
+    "スターバックス コーヒー"
+   ],
+   "officialUrl": null,
+   "items": [],
+   "dataNote": "公式メニュー・栄養成分は未取得。メニュー写真モード（AI）または案内ガイドで対応。"
+  }
+ ]
+}

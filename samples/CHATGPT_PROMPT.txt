@@ -1,0 +1,63 @@
+あなたは食事データの調査担当です。私が送る店名について、公式サイト（公式メニュー・公式の栄養成分表・公式アレルゲン表）だけを調べ、iPhoneアプリ「からだミッション」に読み込ませるJSONファイルを1つ作ってください。
+
+【絶対ルール】
+1. 公式情報で確認できない料理・価格・栄養成分・アレルゲンを作らない。推測・平均値・他サイトの値で埋めない。不明は null。
+2. アレルゲンは公式のアレルゲン表で確認できた時だけ allergens.status を "confirmed" にし、contains に含まれる品目（例：小麦、卵、乳、えび、かに、そば、落花生、くるみ、大豆、さば、さけ、いか、ごま、牛肉、豚肉、鶏肉 など）を書く。確認できなければ "unknown"。
+3. 価格は税込（店内）の円。地域・店舗で違う場合は代表的な値を入れ、note に「地域差あり」と書く。
+4. サイズ違いは別の料理として登録（id を変える。例 gyudon-nami / gyudon-ohmori）。
+5. id は半角英数字とハイフンのみ。店舗 id は店名のローマ字（例 tenya）。既存チェーンは次の id を使う：
+   yoshinoya, sukiya, matsuya, yayoiken, ootoya, sushiro, kurasushi, hamasushi, kappasushi, ohsho, hidakaya, bamiyan, marugame, gusto, saizeriya, cocos, dennys, cocoichi, mcdonalds, mos, subway, starbucks
+6. 同じ id のデータは上書き更新になる。前回と同じ料理は同じ id を使う。
+7. verifiedAt には公式ページを確認した日（YYYY-MM-DD）。
+8. category は main（主食・主菜）/ side（副菜・汁物・サラダ）/ drink（ソフトドリンク）/ alcohol / dessert のどれか。
+9. genre は 牛丼・定食 / 寿司 / 中華・麺類 / ファミレス・カレー / ファストフード・カフェ / 居酒屋 / 個人店 / その他 のどれか。
+10. 寿司チェーンは sushi: true を付け、ネタは1皿を1料理として登録。
+11. 個人経営の店は type を "local" にし、住所が分かれば address、緯度経度が公式・地図で確認できれば lat/lon（分からなければ null）。
+12. 出力は下の形式のJSONだけ。説明文やコメントは入れない。ファイル名は stores-（店のid）-（日付）.json にしてダウンロードできる形で出す。
+13. 最後に別メッセージで、確認に使った公式URLの一覧と、null にした項目の数を教えて。
+
+【形式】
+{
+  "format": "karada-data",
+  "version": 1,
+  "generatedBy": "ChatGPT",
+  "generatedAt": "YYYY-MM-DD",
+  "stores": [
+    {
+      "id": "tenya",
+      "name": "天丼てんや",
+      "type": "chain",
+      "genre": "牛丼・定食",
+      "aliases": ["天丼てんや", "てんや", "Tenya"],
+      "address": null, "lat": null, "lon": null,
+      "officialUrl": "https://...",
+      "verifiedAt": "YYYY-MM-DD",
+      "sushi": false,
+      "items": [
+        {
+          "id": "tenya-yasai-tendon-nami",
+          "name": "野菜天丼",
+          "size": "並",
+          "category": "main",
+          "priceYen": 0,
+          "nutrition": { "kcal": null, "protein": null, "fat": null, "carbs": null, "salt": null },
+          "allergens": { "status": "unknown", "contains": [] },
+          "officialUrl": "https://...",
+          "verifiedAt": "YYYY-MM-DD",
+          "status": "active",
+          "limited": false,
+          "note": null
+        }
+      ]
+    }
+  ],
+  "products": []
+}
+
+コンビニ商品（セブン/ローソン/ファミマ）を追加する時は "stores" を空配列にし、"products" に次の形式で入れる：
+{ "id":"seven-（公式の商品番号）", "store":"seven", "name":"正式名称", "flavor":null, "size":null, "category":"おにぎり", "priceYen":0,
+  "nutrition":{"kcal":null,"protein":null,"fat":null,"carbs":null,"salt":null}, "allergens":{"status":"unknown","contains":[]},
+  "region":"公式記載の販売地域", "officialUrl":"https://...", "verifiedAt":"YYYY-MM-DD", "status":"active" }
+store は seven / lawson / famima、category は おにぎり・弁当・パン・サンドイッチ・サラダ・肉料理・魚料理・惣菜・麺類・スープ・ヨーグルト・間食・飲料 のどれか。
+
+調べる店：（ここに店名）

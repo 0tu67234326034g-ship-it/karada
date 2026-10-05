@@ -1,0 +1,141 @@
+{
+  "format": "karada-data",
+  "version": 1,
+  "generatedBy": "動作確認用",
+  "generatedAt": "2026-10-04",
+  "stores": [
+    {
+      "id": "test-shokudo",
+      "name": "テスト食堂（動作確認用）",
+      "type": "local",
+      "genre": "個人店",
+      "aliases": [
+        "テスト食堂"
+      ],
+      "address": "（架空）",
+      "lat": 35.6812,
+      "lon": 139.7671,
+      "officialUrl": null,
+      "verifiedAt": "2026-10-04",
+      "note": "取り込みテスト用の架空の店です。確認後は削除してください。",
+      "items": [
+        {
+          "id": "saba-teishoku",
+          "name": "さば塩焼き定食",
+          "size": "ご飯普通",
+          "category": "main",
+          "priceYen": 900,
+          "nutrition": {
+            "kcal": 700,
+            "protein": 30,
+            "fat": 25,
+            "carbs": 85,
+            "salt": 4.2
+          },
+          "allergens": {
+            "status": "confirmed",
+            "contains": [
+              "さば",
+              "大豆",
+              "小麦"
+            ]
+          },
+          "verifiedAt": "2026-10-04",
+          "status": "active",
+          "note": "架空の値（テスト用）"
+        },
+        {
+          "id": "chicken-teishoku",
+          "name": "鶏むね照り焼き定食",
+          "size": "ご飯少なめ",
+          "category": "main",
+          "priceYen": 850,
+          "nutrition": {
+            "kcal": 560,
+            "protein": 35,
+            "fat": 12,
+            "carbs": 70,
+            "salt": 3.5
+          },
+          "allergens": {
+            "status": "unknown",
+            "contains": []
+          },
+          "verifiedAt": "2026-10-04",
+          "status": "active",
+          "note": "架空の値（テスト用）"
+        },
+        {
+          "id": "hiyayakko",
+          "name": "冷奴",
+          "category": "side",
+          "priceYen": 200,
+          "nutrition": {
+            "kcal": 90,
+            "protein": 8,
+            "fat": 5,
+            "carbs": 3,
+            "salt": 0.8
+          },
+          "allergens": {
+            "status": "confirmed",
+            "contains": [
+              "大豆"
+            ]
+          },
+          "verifiedAt": "2026-10-04",
+          "status": "active",
+          "note": "架空の値（テスト用）"
+        },
+        {
+          "id": "salad",
+          "name": "小鉢サラダ",
+          "category": "side",
+          "priceYen": 150,
+          "nutrition": {
+            "kcal": null,
+            "protein": null,
+            "fat": null,
+            "carbs": null,
+            "salt": null
+          },
+          "verifiedAt": "2026-10-04",
+          "status": "active",
+          "note": "栄養不明の例"
+        },
+        {
+          "id": "bad-item",
+          "name": "",
+          "category": "main",
+          "priceYen": "abc"
+        }
+      ]
+    },
+    {
+      "id": "matsuya",
+      "name": "松屋",
+      "type": "chain",
+      "genre": "牛丼・定食",
+      "verifiedAt": "2026-10-04",
+      "items": [
+        {
+          "id": "matsuya-gyumeshi-nami",
+          "name": "牛めし",
+          "size": "並盛",
+          "category": "main",
+          "priceYen": 460,
+          "nutrition": {
+            "kcal": 687,
+            "protein": 17.1,
+            "fat": 28.9,
+            "carbs": 85.5,
+            "salt": 3
+          },
+          "verifiedAt": "2026-10-04",
+          "officialUrl": "https://www.matsuyafoods.co.jp/matsuya/menu/gyumeshi/gyumeshi_hp_250422.html"
+        }
+      ]
+    }
+  ],
+  "products": []
+}
