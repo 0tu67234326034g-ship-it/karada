@@ -9,7 +9,7 @@
   S.aiReady = async () => !!(await DB.get('settings', {})).geminiKey;
   async function gemini(prompt, imageBlob, wantJson = true){
     const st = await DB.get('settings', {});
-    if (!st.geminiKey) throw new Error('AIが未設定です（裏メニュー → AI連携）');
+    if (!st.geminiKey) throw new Error('AIが未設定です（設定 → APIキー）');
     const model = st.geminiModel || 'gemini-2.5-flash';
     const parts = [{ text: prompt }];
     if (imageBlob) {

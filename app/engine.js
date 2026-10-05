@@ -163,7 +163,7 @@
     return msgs.join('・') + '（公式表示の合計。水・無糖茶は計算に含めていません）';
   };
   E.shortStore = n => ({ 'セブン-イレブン':'セブン', 'ファミリーマート':'ファミマ' })[n] || n;
-  const label = i => (i.flavor ? `${i.name}（${i.flavor}）` : i.name) + (i.size && !i.name.includes(i.size) ? `〔${i.size}〕` : '');
+  const label = i => (i.flavor && !i.name.includes(i.flavor) ? `${i.name}（${i.flavor}）` : i.name) + (i.size && !i.name.includes(i.size) ? `〔${i.size}〕` : '');
   E.convCmd = (storeName, items) => {
     const food = items.filter(i => i.role !== 'drink').map(i => `${label(i)}を${i.qty || 1}個`);
     const d = items.find(i => i.role === 'drink');
@@ -221,7 +221,7 @@
     const mains = by('main'), prots = by('protein'), vegs = by('veg'), drinks = by('drink').filter(isDrinkWaterTea);
     if (!mains.length && !prots.length) {
       const st = E.poolStats(products, store, prof);
-      const why = st.unverified && (prof.allergies || []).length ? `アレルゲン情報が確認できていない商品（${st.unverified}品）は、安全と判断できないため除外しています。裏メニュー →「好き嫌い・アレルギー」で「未確認の商品も表示（自分でラベル確認）」を選ぶか、アレルゲン確認済みのデータを追加してください。` : 'この店舗・地域で条件に合う登録商品がありません。別の店舗を選ぶか、商品データを追加してください。';
+      const why = st.unverified && (prof.allergies || []).length ? `アレルゲン情報が確認できていない商品（${st.unverified}品）は、安全と判断できないため除外しています。設定 →「好み・アレルギー・予算」で「未確認の商品も表示（自分でラベル確認）」を選ぶか、アレルゲン確認済みのデータを追加してください。` : 'この店舗・地域で条件に合う登録商品がありません。別の店舗を選ぶか、商品データを追加してください。';
       return { error: why };
     }
     let kcalT = Math.round(target.kcal * (E.mealShare[meal] || 0.3));

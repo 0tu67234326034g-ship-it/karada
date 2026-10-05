@@ -173,6 +173,7 @@
   async function photoURL(id){ const b = id && await DB.getPhoto(id); return b ? URL.createObjectURL(b) : null; }
   function view(html, dock = ''){
     $('#app').innerHTML = `<div class="wrap">${html}</div>` + (dock ? `<div class="dock"><div class="inner">${dock}</div></div>` : '');
+    document.body.classList.toggle('has-dock', !!dock);
     window.scrollTo(0, 0);
   }
   const go = h => { if (location.hash === h) route(); else location.hash = h; };
@@ -181,7 +182,7 @@
 
   function itemHTML(it, opts = {}){
     const n = it.nutrition || {};
-    const nameLine = esc(it.name) + (it.flavor ? `<span class="pill">${esc(it.flavor)}</span>` : '') + (it.size ? `<span class="pill">${esc(it.size)}</span>` : '') + (it.qty ? `<span class="pill ok">${it.qty}${it.role === 'drink' ? '本' : '個'}</span>` : '');
+    const nameLine = esc(it.name) + (it.flavor && !it.name.includes(it.flavor) ? `<span class="pill">${esc(it.flavor)}</span>` : '') + (it.size ? `<span class="pill">${esc(it.size)}</span>` : '') + (it.qty ? `<span class="pill ok">${it.qty}${it.role === 'drink' ? '本' : '個'}</span>` : '');
     const alg = it.allergens?.status === 'confirmed' ? `<span class="pill ok">アレルゲン確認済${it.allergens.contains?.length ? '：' + esc(it.allergens.contains.join('・')) : '（該当なし）'}</span>` : `<span class="pill warn">アレルゲン未確認</span>`;
     const nut = n.kcal == null && n.protein == null ? `<span>栄養成分：公式未掲載（不明）</span>` :
       `<span>${n1(n.kcal)} kcal</span><span>P ${n1(n.protein)}g</span><span>F ${n1(n.fat)}g</span><span>C ${n1(n.carbs)}g</span><span>塩 ${n1(n.salt)}g</span>`;
@@ -199,7 +200,7 @@
   function renderSetup(){
     const p = App.prof || { sex:'male', activity:'low', budget:700, wake:'07:00', sleep:'23:30', allergies:[], pref:'東京都' };
     view(`
-      ${App.prof ? back('#ura') : ''}
+      ${App.prof ? back('#settings') : ''}
       <div class="logo" style="font-size:26px;margin-top:10px">からだミッション</div>
       <p class="small">考えなくていい。指令どおりに買って、撮るだけ。まずは基本情報を登録しろ！（端末の中だけに保存されます）</p>
       ${App.prof ? '' : storageNotice() + `<button class="btn" onclick="App.go('#backup')">💾 バックアップから復元して始める</button>`}
@@ -335,36 +336,42 @@
       ? dctx.vending.filter(v => v.caffeineMg).slice(0, 3).map((v, i) => `<button class="btn sm" data-vcoffee="${i}">☕ ${esc(v.name)}</button>`).join('')
       : `<button class="btn sm" data-coffee="0">☕ コーヒー飲んだ</button>`;
     view(`
-      <div class="topbar"><div class="logo">KARADA MISSION</div><div class="spacer"></div><button class="iconbtn" onclick="App.go('#log')">戦績</button><button class="iconbtn" onclick="App.go('#ura')">裏</button></div>
+      <header class="topbar"><div class="logo">KARADA<span>MISSION</span></div><div class="spacer"></div>
+        <button class="hbtn" onclick="App.go('#log')" aria-label="戦績">${ICON.trophy}<span>戦績</span></button>
+        <button class="hbtn icon" onclick="App.go('#settings')" aria-label="設定">${ICON.gear}</button></header>
       ${storageNotice()}
       <div class="lv ${theme}" onclick="App.go('#log')"><div class="badge">${lv.lv}</div><div style="flex:1"><div class="small"><b style="color:var(--text)">${esc(G.title(lv.lv))}</b>　${g.xp} XP　次まで ${lv.toNext}</div><div class="bar"><i style="width:${lv.pct}%"></i></div>
-        <div class="tiny" style="margin-top:4px">🔥 連続 ${streak}日　🏅 今週 ${wk.r}ランク（${esc(wk.name)}）</div></div></div>
+        <div class="tiny" style="margin-top:4px">🔥 連続 ${streak}日　🏅 今週 ${wk.r}ランク</div></div></div>
       ${comeback ? `<div class="okbox">おかえり！ 昨日までのことは気にしない。今日の1ミッションから再開しよう。</div>` : ''}
       ${!day.schedule ? `<div class="card gold brief"><div class="kicker">TODAY'S OPERATION</div><h3>📋 今日の作戦会議</h3>
           ${lp ? `<div class="small">前回の作戦：${esc(planSummary(lp))}</div><button class="btn primary" id="h-same">前回と同じ作戦で開始！</button><button class="btn" onclick="App.go('#morning')">作戦を変えて開始</button>`
                : `<div class="small">予定・食事・場所を1画面で決めて、今日の作戦を開始しよう。</div><button class="btn primary" onclick="App.go('#morning')">作戦会議を開く</button>`}</div>`
-        : `<div class="card ${theme ? theme + ' special' : 'gold'}" ><div class="row"><div style="flex:3" onclick="App.go('#morning')"><div class="kicker">${type === 'golf' ? 'ROUND DAY' : type === 'travel' ? 'AWAY MISSION' : type === 'softball' ? 'GAME DAY' : "TODAY'S OPERATION"}</div>
+        : `<div class="card op ${theme ? theme + ' special' : 'gold'}" ><div onclick="App.go('#morning')"><div class="kicker">${type === 'golf' ? 'ROUND DAY' : type === 'travel' ? 'AWAY MISSION' : type === 'softball' ? 'GAME DAY' : "TODAY'S OPERATION"}</div>
           <h3>${E.SCHED[type].em} ${E.SCHED[type].label}${day.schedule.golf?.course ? '　' + esc(day.schedule.golf.course) : ''}</h3>
-          <div class="small">目標 ${t.kcal}kcal ／ 記録 ${Math.round(eaten.kcal)}kcal${eaten.unknown ? '＋不明' + eaten.unknown + '品' : ''} ／ たんぱく質 ${Math.round(eaten.protein)}/${t.protein}g</div></div>
-          <button class="btn sm" id="h-replan" style="flex:none">⚡ 予定が<br>変わった</button></div>
-          ${type === 'golf' || type === 'softball' ? `<hr><div class="small">${type === 'golf' ? '⛳ ラウンド完走ミッション：水分補給（茶店・持参の水）を続けて、最後まで回り切れ！' : '🥎 完走ミッション：こまめな水分・塩分補給で最後まで動き切れ！'}</div>${day.exerciseDone ? `<div class="done" style="margin-top:6px">✓ 完走！</div>` : `<button class="btn sm ok" id="h-ex">${type === 'golf' ? '🏌️ ラウンド完走！' : '🥎 完走した！'}</button>`}` : ''}
+          <div class="opstats"><div><span>目標</span><b>${t.kcal}<small>kcal</small></b></div><div><span>記録</span><b>${Math.round(eaten.kcal)}<small>kcal${eaten.unknown ? '＋不明' + eaten.unknown : ''}</small></b></div><div><span>たんぱく質</span><b>${Math.round(eaten.protein)}<small>/${t.protein}g</small></b></div></div></div>
+          <div class="btnrow"><button class="btn sm ghost" onclick="App.go('#morning')">📋 作戦を確認</button><button class="btn sm" id="h-replan">⚡ 予定が変わった</button></div>
+          ${type === 'golf' || type === 'softball' ? `<hr><div class="small">${type === 'golf' ? '⛳ ラウンド完走ミッション：水分補給（茶店・持参の水）を続けて、最後まで回り切れ！' : '🥎 完走ミッション：こまめな水分・塩分補給で最後まで動き切れ！'}</div>${day.exerciseDone ? `<div class="done" style="margin-top:6px">✓ 完走！</div>` : `<button class="btn ok" id="h-ex">${type === 'golf' ? '🏌️ ラウンド完走！' : '🥎 完走した！'}</button>`}` : ''}
           ${type === 'travel' ? `<hr><div class="small">🧳 遠征ミッション：駅や空港のコンビニ・近くの店からでも指令が出せる。2食クリアで遠征ボーナス！</div>` : ''}
         </div>`}
       ${rp && !day.flags?.recovery ? `<div class="card recovery"><div class="kicker">RECOVERY MISSION</div><b>${esc(day.recovery.reason)} 今日はリカバリー作戦。</b>
           ${day.recovery.tasks.map(x => `<div class="li" style="padding:6px 0"><span class="t small">${rp[x.id] ? '✅' : '⬜'} ${esc(x.label)}</span></div>`).join('')}<div class="tiny">3つクリアでボーナス +${G.BONUS.recovery.xp}XP。減点はありません。</div></div>`
         : day.flags?.recovery ? `<div class="okbox">🌅 リカバリー成功！ ちゃんと戻せた。</div>` : ''}
+      <div class="sectlabel">現在地</div>
       <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
       <h2>本日の指令</h2>
       <div class="grid3">${slots.map(s => `<button class="tile ${day.meals[s]?.status === 'cleared' ? 'cleared' : ''}" data-meal="${s}"><span class="em">${({breakfast:'🌅',lunch:'🍱',dinner:'🌙'})[s]}</span><b>${E.MEAL_LABEL[s]}</b><span class="small">${mealState(s)}</span></button>`).join('')}</div>
-      ${nextDrink ? (() => { const dt = E.drinkText(nextDrink, dctx); return `<div class="card drinkcard"><div class="kicker">💧 ${nextDrink.time} 飲み物ミッション</div><div class="row"><b style="flex:3">${esc(dt.text)}</b><button class="btn sm ok" style="flex:none" data-drink="${esc(nextDrink.id)}">飲んだ！</button></div>
-          <div style="margin-top:6px">${coffeeBtns}<button class="btn sm ghost" onclick="App.go('#drinks')">一覧${overdue ? `（未記録${overdue}）` : ''}</button></div></div>`; })() : `<div class="okbox">💧 今日の飲み物ミッションはすべて完了！</div>`}
-      <div class="grid2" style="margin-top:10px">
+      ${nextDrink ? (() => { const dt = E.drinkText(nextDrink, dctx); return `<div class="card drinkcard"><div class="kicker">💧 ${nextDrink.time} 飲み物ミッション</div><div class="dtext">${esc(dt.text)}</div>
+          <button class="btn ok drinkbtn" data-drink="${esc(nextDrink.id)}">飲んだ！</button>
+          <div class="btnrow">${coffeeBtns}<button class="btn sm ghost" onclick="App.go('#drinks')">一覧${overdue ? `（未記録${overdue}）` : ''}</button></div></div>`; })() : `<div class="okbox">💧 今日の飲み物ミッションはすべて完了！</div>`}
+      <h2>サポート</h2>
+      <div class="grid2">
         <button class="tile" onclick="App.go('#snack')"><span class="em">🆘</span><b>お助け間食</b><span class="small">気分で選ぶ</span></button>
         <button class="tile" onclick="App.go('#train')"><span class="em">💪</span><b>トレーニング</b><span class="small">${day.training.length ? `<span class="done">✓ ${day.training.length}回</span>` : day.schedule?.exercise === 'training' ? '<span class="hot">本日の指令</span>' : lastTrainLabel()}</span></button>
         <button class="tile" id="h-body"><span class="em">⚖️</span><b>体重・歩数</b><span class="small">${day.weightLogged ? '<span class="done">✓ 体重</span>' : '朝の計測'}${day.steps != null ? '・' + day.steps.toLocaleString() + '歩' : ''}</span></button>
         <button class="tile" onclick="App.go('#nearby')"><span class="em">📍</span><b>現在地から探す</b><span class="small">近くのお店</span></button>
       </div>
-      <div class="card" style="margin-top:12px" onclick="App.go('#log')"><div class="progress-wrap">${ring(sc.pct)}<div style="flex:1"><b>今日の達成状況</b>
+      <h2>今日の達成状況</h2>
+      <div class="card" onclick="App.go('#log')"><div class="progress-wrap">${ring(sc.pct)}<div style="flex:1;min-width:0">
         <div class="small">食事 ${sc.mealsDone}/3・水分 ${sc.drinkDone}/${sc.drinkTotal}・体重 ${day.weightLogged ? '✓' : '—'}・${['golf','softball'].includes(type) ? '完走 ' + (day.exerciseDone ? '✓' : '—') : '歩く/運動 ' + (sc.parts.move >= 1 ? '✓' : day.steps != null ? Math.round(sc.parts.move * 100) + '%' : '—')}</div>
         <div class="small" style="margin-top:4px">${sc.perfect ? '<b class="done">🌟 今日の作戦完了！ PERFECT DAY</b>' : sc.missing.length === 1 ? `<b class="hot">あと1つで完全達成：${esc(sc.missing[0])}</b>` : `完全達成まで あと${sc.missing.length}つ`}</div>
         <div class="tiny" style="margin-top:2px">今日 +${g.xpByDay[E.today()] || 0}XP　7日間の戦績 ›</div></div></div></div>
@@ -442,9 +449,13 @@
   const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
   function storageNotice(){
     if (isStandalone() && App.settings.storageNoticeSeen) return '';
-    if (isStandalone()) return `<div class="okbox">ホーム画面のアプリで起動しています。記録はこのアプリの中に保存されます（Safariで開いた時とは別の保存場所です）。<button class="btn sm" data-dismiss-notice>わかった</button></div>`;
-    return `<div class="warnbox"><b>Safariで開いています。</b>iPhoneでは、Safariとホーム画面に追加したアプリで保存データが別になります。毎日使う前に、共有ボタン →「ホーム画面に追加」から起動してください。Safariで記録したデータは「裏 → バックアップ」で書き出し、アプリ側で復元できます。</div>`;
+    if (isStandalone()) return `<div class="okbox notice-ok"><span>ホーム画面のアプリで起動中。記録はこのアプリ内に保存されます（Safariとは別の保存場所）。</span><button class="btn sm" data-dismiss-notice>わかった</button></div>`;
+    return `<details class="notice"><summary>⚠️ Safariで開いています（タップで詳細）</summary><div class="small">iPhoneでは、Safariとホーム画面に追加したアプリで保存データが別になります。毎日使う前に、共有ボタン →「ホーム画面に追加」から起動してください。Safariで記録したデータは「設定 → バックアップと復元」で書き出し、アプリ側で復元できます。</div></details>`;
   }
+  const ICON = {
+    gear: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"/></svg>',
+    trophy: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>'
+  };
   function ring(p){ const r = 36, c = 2*Math.PI*r; return `<svg class="ring" viewBox="0 0 84 84"><circle cx="42" cy="42" r="${r}" fill="none" stroke="#2a3042" stroke-width="8"/><circle cx="42" cy="42" r="${r}" fill="none" stroke="url(#g)" stroke-width="8" stroke-linecap="round" stroke-dasharray="${c*p/100} ${c}" transform="rotate(-90 42 42)"/><defs><linearGradient id="g"><stop offset="0" stop-color="#d9b46a"/><stop offset="1" stop-color="#f1d9a2"/></linearGradient></defs><text x="42" y="47" text-anchor="middle" fill="#eef0f5" font-size="17" font-weight="800">${p}%</text></svg>`; }
   function sumDay(day){ const s = { kcal:0, protein:0, unknown:0 }; for (const m of Object.values(day.meals || {})) if (m.status === 'cleared' && m.mission?.sum) { s.kcal += m.mission.sum.kcal || 0; s.protein += m.mission.sum.protein || 0; s.unknown += m.mission.sum.unknown || 0; } else if (m.status === 'cleared') s.unknown++; for (const sn of (day.snacks || [])) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; } s.complete = s.unknown === 0 && s.kcal > 0; return s; }
   function bindDrinkButtons(){
@@ -771,7 +782,7 @@
       ${!cleared && ms && !ms.error ? `<div class="card"><b>指令を変更する</b><div class="small">理由を選んでください。「気分」だけ1日1食につき1回まで（残り${Math.max(0, 1 - (m.moodRerolls || 0))}回）。ほかは何度でもOK。</div>
         <div class="chips" style="margin-top:8px">${[['soldout','売り切れ'],['plan','予定変更'],['more','量が足りない'],['sick','体調'],['allergy','アレルギー'],['mood','気分が変わった'],['other','その他']].map(([k, l]) => `<span class="chip ${k === 'mood' && (m.moodRerolls || 0) >= 1 ? 'off' : ''}" data-re="${k}">${l}</span>`).join('')}</div></div>` : ''}
       <button class="btn ghost" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">別の店にする</button>`,
-      cleared ? `<button class="btn" onclick="App.go('#home')">ホームへ</button>` : (ms && !ms.error ? `<button class="btn" id="ms-manual" style="flex:1">手動でクリア</button><button class="btn primary" id="ms-photo" style="flex:2">📷 撮影してクリア</button>` : `<button class="btn" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">店を選び直す</button>`));
+      cleared ? `<button class="btn" onclick="App.go('#home')">ホームへ</button>` : (ms && !ms.error ? `<button class="btn" id="ms-manual" style="flex:1">手動でクリア</button><button class="btn primary" id="ms-photo" style="flex:1.6">📷 撮影してクリア</button>` : `<button class="btn" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">店を選び直す</button>`));
     document.querySelectorAll('[data-soldout]').forEach(b => b.onclick = async () => {
       const d = await getDay(); const mm = d.meals[slot]; mm.soldout.push(b.dataset.soldout);
       if (mm.mission.kind === 'chain') { mm.rerollCount = (mm.rerollCount || 0) + 1; await issueChain(d, slot, mm.source.id, {}); await saveDay(d); return renderMission(slot); }
@@ -807,7 +818,7 @@
       <div class="small">${o.order.map(x => x.kcal != null ? `${esc(x.name)}：${x.kcal}kcal${x.estimated ? '（AI推定・参考）' : '（メニュー表記）'}` : '').filter(Boolean).join('<br>')}</div>${o.advice ? `<div class="okbox">${esc(o.advice)}</div>` : ''}</div>`;
   }
   async function aiMenuChoose(slot, scene){
-    if (!(await S.aiReady())) return sheet(`<h2>AIが未設定です</h2><p class="small">裏メニュー →「AI連携」でGeminiの無料APIキーを設定すると、メニュー写真から料理を選べます。</p><div class="okbox">今はガイドに沿って選び、注文した料理を撮影してクリアしてください。</div><button class="btn" onclick="this.closest('.sheet-bg').remove()">閉じる</button>`);
+    if (!(await S.aiReady())) return sheet(`<h2>AIが未設定です</h2><p class="small">設定 →「APIキー」でGeminiの無料APIキーを設定すると、メニュー写真から料理を選べます。</p><div class="okbox">今はガイドに沿って選び、注文した料理を撮影してクリアしてください。</div><button class="btn" onclick="this.closest('.sheet-bg').remove()">閉じる</button>`);
     const blob = await pickPhoto(); if (!blob) return;
     toast('AIがメニューを読んでいます…');
     const day = await getDay(); const t = targets(day);
@@ -831,7 +842,7 @@
       await saveDay(day);
       const list = ms.kind === 'sushi' ? ms.order.map(o => ({ id:'neta:' + o.name, name:o.name })) : (ms.items || []);
       if (!list.length) return toast('入れ替えられる商品がありません。「その他」で選び直せます');
-      return sheet(`<h2>${reason === 'soldout' ? 'どれが売り切れ？' : 'どれが合わない？'}</h2><p class="small">同じ店の登録商品から代わりを指定します。</p>${list.map(it => `<button class="btn" data-ex="${esc(it.id)}">${esc(it.name)}</button>`).join('')}${reason === 'allergy' ? '<p class="tiny">裏メニュー「好き嫌い・アレルギー」も更新しておくと、次から出ません。</p>' : ''}`, bg => bg.querySelectorAll('[data-ex]').forEach(b => b.onclick = async () => {
+      return sheet(`<h2>${reason === 'soldout' ? 'どれが売り切れ？' : 'どれが合わない？'}</h2><p class="small">同じ店の登録商品から代わりを指定します。</p>${list.map(it => `<button class="btn" data-ex="${esc(it.id)}">${esc(it.name)}</button>`).join('')}${reason === 'allergy' ? '<p class="tiny">設定の「好み・アレルギー・予算」も更新しておくと、次から出ません。</p>' : ''}`, bg => bg.querySelectorAll('[data-ex]').forEach(b => b.onclick = async () => {
         const d = await getDay(); const mm = d.meals[slot]; const id = b.dataset.ex;
         bg.remove();
         if (id.startsWith('neta:')) { mm.soldout.push(id.slice(5)); mm.rerollCount = (mm.rerollCount || 0) + 1; const keep = mm.soldout; await issueChain(d, slot, mm.source.id, {}); d.meals[slot].soldout = keep; }
@@ -1003,6 +1014,7 @@
     const place = ctx.place;
     const vendCaf = ctx.vending.filter(i => i.caffeineMg);
     view(`${back()}<div class="kicker" style="margin-top:6px">HYDRATION</div><h1>💧 飲み物ミッション</h1>
+      <div class="sectlabel">現在地</div>
       <div class="placebar">${Object.entries(E.PLACES).map(([k, v]) => `<button class="pchip ${k === place ? 'on' : ''}" data-place="${k}">${v.em}<span>${v.label}</span></button>`).join('')}</div>
       <p class="tiny">場所に合わせて指令が変わります。飲み物のためだけに買い物はさせません。</p>
       <div class="list card">${day.drinks.map(d => { const t = d.done && d.said ? d.said : E.drinkText(d, ctx).text; return `<div class="li"><span class="small" style="width:44px">${d.time}</span><span class="t ${d.done ? 'small' : ''}">${esc(t)}</span>${d.done ? `<span class="done">✓</span>` : `<button class="btn sm ok" data-drink="${esc(d.id)}">飲んだ！</button>`}</div>`; }).join('')}</div>
@@ -1061,7 +1073,7 @@
         <button class="btn" id="w-photo">📷 体重計を撮って読み取る</button></div>
       <div class="card"><b>今日の歩数</b>${t.steps ? '' : `<div class="small">今日は運動日なので歩数ミッションはありません（記録は任意）</div>`}
         <div class="row"><input id="st-in" type="number" inputmode="numeric" placeholder="例 8000" value="${esc(day.steps ?? '')}"><button class="btn sm" id="st-save" style="flex:none">保存</button></div>
-        <p class="tiny">iPhoneの「ショートカット」で自動入力できます（裏メニュー → ヘルスケア連携）。</p></div>
+        <p class="tiny">iPhoneの「ショートカット」で自動入力できます（設定 → ヘルスケア連携）。</p></div>
       <div class="card"><b>週1回の全身写真（任意・本人のみ閲覧）</b><div class="small">${bp.length}枚保存。共有はされません。</div>
         <button class="btn" id="bp-add">📷 撮影する</button>${bp.length ? `<button class="btn ghost" id="bp-view">写真を見る</button>` : ''}</div>`);
     drawChart($('#wchart'), ma, +App.prof.goalKg);
@@ -1160,31 +1172,46 @@
     });
   }
 
-  /* ================= 裏メニュー ================= */
-  async function renderUra(){
-    view(`${back()}<h1>🗝 裏メニュー</h1>
-      <div class="list card">
-        <div class="li" onclick="App.go('#import')"><span class="t">📥 ChatGPTから店舗を追加</span>›</div>
-        <div class="li" onclick="App.go('#places')"><span class="t">🏠 自宅・会社の位置（場所の自動判定）</span>›</div>
-        <div class="li" onclick="App.go('#fav')"><span class="t">⭐ 行きつけ店・メニュー写真登録</span>›</div>
-        <div class="li" onclick="App.go('#vending')"><span class="t">🥤 会社の自販機登録</span>›</div>
-        <div class="li" onclick="App.go('#setup')"><span class="t">🍽 好き嫌い・アレルギー・予算・体の情報</span>›</div>
-        <div class="li" onclick="App.go('#notify')"><span class="t">🔔 通知設定</span>›</div>
-        <div class="li" onclick="App.go('#ai')"><span class="t">🤖 AI連携（Gemini無料枠）</span>›</div>
-        <div class="li" onclick="App.go('#health')"><span class="t">❤️ ヘルスケア連携（ショートカット）</span>›</div>
-        <div class="li" onclick="App.go('#products')"><span class="t">📦 商品情報の追加・更新</span>›</div>
-        <div class="li" onclick="App.go('#photos')"><span class="t">🖼 写真の整理・削除</span>›</div>
-        <div class="li" onclick="App.go('#backup')"><span class="t">💾 バックアップと復元</span>›</div>
-        <div class="li" onclick="App.go('#social')"><span class="t">🤝 仲間機能と共有設定</span>›</div>
-        <div class="li" onclick="App.go('#badges')"><span class="t">🏅 バッジ</span>›</div>
-      </div>
-      <p class="tiny">商品データ ${App.data.productsVersion}版（${App.data.products.length}品）／店舗 ${App.data.chains.length}店（メニュー ${App.data.chains.reduce((a, c) => a + c.items.length, 0)}品）</p>
-      <p class="tiny">裏メニューを使わなくても、毎日のミッションは同梱データで動きます。</p>`);
+  /* ================= 設定 ================= */
+  async function renderSettings(){
+    const st = App.settings;
+    const P = st.places || {};
+    const nf = st.notify || {};
+    const imported = Object.keys(await DB.get('customStores', {})).length;
+    const favs = (await favList()).length, vend = (await vendingList()).length;
+    const photos = (await DB.photoKeys()).length;
+    const row = (href, ic, title, sub) => `<div class="setrow" onclick="App.go('${href}')"><span class="ic">${ic}</span><span class="tx"><b>${title}</b>${sub ? `<span>${sub}</span>` : ''}</span><span class="chev">›</span></div>`;
+    const group = (title, rows) => `<div class="setgroup"><div class="gtitle">${title}</div><div class="setlist">${rows.join('')}</div></div>`;
+    view(`${back()}<div class="kicker">SETTINGS</div><h1>設定</h1>
+      ${group('お店・メニュー', [
+        row('#fav', '⭐', '行きつけ店', favs ? `${favs}店を登録中` : 'お店とメニュー写真を登録'),
+        row('#vending', '🥤', '会社の自販機', vend ? `${vend}台を登録中` : '飲み物ミッションで使う商品を登録'),
+        row('#import', '📥', 'ChatGPTから店舗を追加（JSON取り込み）', imported ? `取り込み済み ${imported}店` : 'チェーン店・個人店・コンビニ商品を一括追加'),
+        row('#products', '📦', '商品情報の追加・更新', `${App.data.products.length}品・販売終了の切り替え`)
+      ])}
+      ${group('自分のこと', [
+        row('#setup', '🍽', '好み・アレルギー・予算', '体の情報・目標・起床/就寝もここ'),
+        row('#places', '🏠', '自宅・会社の位置', (P.home || P.office ? '登録済み' : '未登録') + '・位置情報 ' + (st.locationOn ? 'ON' : 'OFF'))
+      ])}
+      ${group('通知・連携', [
+        row('#notify', '🔔', '通知', Object.values(nf).some(v => v === true) ? 'ON の項目あり' : 'すべてOFF'),
+        row('#ai', '🔑', 'APIキー（Gemini・AI連携）', st.geminiKey ? '設定済み' : '未設定（なくても使えます）'),
+        row('#health', '❤️', 'ヘルスケア連携', 'ショートカットで歩数・体重を取り込み')
+      ])}
+      ${group('データ', [
+        row('#photos', '🖼', '写真の管理', `${photos}枚・不要な写真を削除`),
+        row('#backup', '💾', 'バックアップ／復元', st.lastBackup ? `前回 ${st.lastBackup}` : 'まだバックアップしていません')
+      ])}
+      ${group('その他', [
+        row('#badges', '🏅', 'バッジ', `${App.game.badges.length}/${G.BADGES.length} 獲得`),
+        row('#social', '🤝', '仲間機能と共有設定', '準備中・共有はすべてOFF')
+      ])}
+      <p class="tiny">商品データ ${App.data.productsVersion}版（${App.data.products.length}品）／店舗 ${App.data.chains.length}店（メニュー ${App.data.chains.reduce((a, c) => a + c.items.length, 0)}品）<br>設定を開かなくても、毎日のミッションは同梱データで動きます。</p>`);
   }
 
   async function renderFav(){
     const favs = await favList();
-    view(`${back('#ura')}<h1>⭐ 行きつけ店</h1><p class="small">店名とメニュー写真を登録すると、AIが料理を読み取って保存し、次回からその店のミッションを出せます。ゴルフ場はここではなく、ゴルフの日の予定で指定します。</p>
+    view(`${back('#settings')}<h1>⭐ 行きつけ店</h1><p class="small">店名とメニュー写真を登録すると、AIが料理を読み取って保存し、次回からその店のミッションを出せます。ゴルフ場はここではなく、ゴルフの日の予定で指定します。</p>
       ${favs.map(f => `<div class="card"><b>${esc(f.name)}</b><div class="small">${(f.items||[]).length}品</div>${(f.items||[]).slice(0, 30).map((x, i) => `<div class="li" style="padding:6px 0"><span class="t">${esc(x.name)}${x.priceYen ? '・' + x.priceYen + '円' : ''}${x.kcal ? '・' + x.kcal + 'kcal（表記）' : ''}</span><button class="btn sm" data-fdel="${f.id}:${i}">削除</button></div>`).join('')}
         <div class="tiny">${f.lat ? `位置登録済み（${f.lat.toFixed(4)}, ${f.lon.toFixed(4)}）` : '位置未登録（登録すると「現在地から探す」で優先表示）'}</div><button class="btn sm" data-floc="${f.id}">📍 今いる場所を店の位置にする</button><button class="btn sm" data-fadd="${f.id}">＋手入力</button><button class="btn sm" data-fphoto="${f.id}">📷 メニュー写真を追加</button><button class="btn sm" data-frm="${f.id}">店を削除</button></div>`).join('')}
       <div class="card"><label>新しい店名</label><input id="f-name" placeholder="例：駅前食堂"><button class="btn primary" id="f-new">登録してメニュー写真を撮る</button></div>`);
@@ -1206,7 +1233,7 @@
 
   async function renderVending(){
     const vs = await vendingList();
-    view(`${back('#ura')}<h1>🥤 会社の自販機</h1><p class="small">自販機の全体写真や商品写真を撮ると、AIが商品名・容量・カフェイン量（表示があれば）を記録します。飲み物ミッションに使われます。</p>
+    view(`${back('#settings')}<h1>🥤 会社の自販機</h1><p class="small">自販機の全体写真や商品写真を撮ると、AIが商品名・容量・カフェイン量（表示があれば）を記録します。飲み物ミッションに使われます。</p>
       ${vs.map(v => `<div class="card"><b>${esc(v.name)}</b>${v.items.map((x, i) => `<div class="li" style="padding:6px 0"><span class="t">${esc(x.name)} ${esc(x.size || '')}${x.caffeineMg ? '・カフェイン' + x.caffeineMg + 'mg' : ''}</span><button class="btn sm" data-vedit="${v.id}:${i}">修正</button><button class="btn sm" data-vdel="${v.id}:${i}">削除</button></div>`).join('')}
         <button class="btn sm" data-vphoto="${v.id}">📷 写真で追加</button><button class="btn sm" data-vadd="${v.id}">＋手入力</button><button class="btn sm" data-vrm="${v.id}">削除</button></div>`).join('')}
       <div class="card"><label>自販機の名前</label><input id="v-name" placeholder="例：会社3階の自販機"><button class="btn primary" id="v-new">登録して撮影</button></div>`);
@@ -1235,7 +1262,7 @@
   async function renderNotify(){
     const nf = App.settings.notify || {};
     const tg = (k, l) => `<div class="li"><span class="t">${l}</span><button class="toggle ${nf[k] ? 'on' : ''}" data-nf="${k}"></button></div>`;
-    view(`${back('#ura')}<h1>🔔 通知設定</h1>
+    view(`${back('#settings')}<h1>🔔 通知設定</h1>
       <div class="warnbox">iPhoneのホーム画面アプリ（PWA）は、無料のままではアプリを閉じている時の予約通知ができません。①アプリを開いている間の通知 と ②iPhoneのカレンダーに毎日の通知を登録する方法 を用意しました。</div>
       <div class="list card">${tg('weight','朝の体重測定')}${tg('lunch','昼食')}${tg('dinner','夕食')}${tg('drink','水分補給')}</div>
       <div class="row"><div><label>昼食の時刻</label><input id="nf-l" type="time" value="${esc(nf.lunchTime || '12:00')}"></div><div><label>夕食の時刻</label><input id="nf-d" type="time" value="${esc(nf.dinnerTime || '19:00')}"></div></div>
@@ -1259,7 +1286,7 @@
 
   async function renderAI(){
     const st = await DB.get('settings', {});
-    view(`${back('#ura')}<h1>🤖 AI連携（任意）</h1>
+    view(`${back('#settings')}<h1>🔑 APIキー（AI連携・任意）</h1>
       <p class="small">GoogleのGemini API（無料枠）を使います。キーはこのiPhoneの中だけに保存され、アプリのコードやサーバーには含まれません。未設定でも、登録済みデータで通常のミッションは使えます。</p>
       <div class="card"><label>Gemini APIキー</label><input id="ai-k" type="password" value="${esc(st.geminiKey || '')}" placeholder="AIza…">
       <label>モデル名</label><input id="ai-m" value="${esc(st.geminiModel || 'gemini-2.5-flash')}">
@@ -1274,7 +1301,7 @@
 
   async function renderHealth(){
     const base = location.href.split('#')[0];
-    view(`${back('#ura')}<h1>❤️ ヘルスケア連携</h1>
+    view(`${back('#settings')}<h1>❤️ ヘルスケア連携</h1>
       <p class="small">ホーム画面アプリ（PWA）はApple「ヘルスケア」を直接読めません。代わりにiPhone標準の「ショートカット」アプリで、歩数と体重をこのアプリに渡せます（無料・Mac不要）。</p>
       <div class="card"><b>ショートカットの作り方</b><ol class="small">
         <li>ショートカット → ＋ →「ヘルスケアサンプルを検索」：種類＝歩数、開始日＝今日、グループ＝日、合計</li>
@@ -1294,7 +1321,7 @@
 
   async function renderProducts(){
     const counts = {}; App.data.products.forEach(p => { counts[p.storeName] = counts[p.storeName] || { all:0, nut:0 }; counts[p.storeName].all++; if (p.nutrition?.kcal != null) counts[p.storeName].nut++; });
-    view(`${back('#ura')}<h1>📦 商品情報</h1>
+    view(`${back('#settings')}<h1>📦 商品情報</h1>
       <div class="card"><b>登録状況</b>${Object.entries(counts).map(([k, v]) => `<div class="small">${k}：${v.all}品（栄養成分あり ${v.nut}品）</div>`).join('')}
         <div class="small">チェーン店：${App.data.chains.filter(c => c.items.length).length}/${App.data.chains.length}社でメニュー登録あり</div></div>
       <div class="card"><b>一括更新（JSON）</b><p class="small">ChatGPTが作ったJSON（karada-data形式）や products.json を読み込めます。取り込み前に登録・更新・重複・エラーの件数を確認できます。</p><button class="btn" id="pr-imp">JSONファイルを読み込む</button></div>
@@ -1323,7 +1350,7 @@
 
   async function renderBackup(){
     const st = await DB.get('settings', {});
-    view(`${back(App.prof ? '#ura' : '#setup')}<h1>💾 バックアップと復元</h1>
+    view(`${back(App.prof ? '#settings' : '#setup')}<h1>💾 バックアップと復元</h1>
       <p class="small">データはこのiPhoneの中だけにあります。機種変更やSafariのデータ削除に備えて、定期的にバックアップしてください（「ファイル」アプリやiCloud Driveに保存できます）。${st.lastBackup ? `<br>前回のバックアップ：${st.lastBackup}` : ''}</p>
       <div class="card"><b>含まれるもの</b><div class="small">プロフィール・設定・毎日の記録（食事・飲み物・トレーニング）・体重・取り込んだ店舗・追加商品・行きつけ店・自販機・ゲームの進み具合・（選んだ場合）写真</div>
       <div class="small" style="margin-top:4px"><b>含まれないもの</b>：GeminiのAPIキー（秘密情報のため。復元後に再入力が必要な場合があります）</div></div>
@@ -1359,7 +1386,7 @@
   async function renderSocial(){
     const sh = App.settings.share || {};
     const tg = (k, l) => `<div class="li"><span class="t">${l}</span><button class="toggle ${sh[k] ? 'on' : ''}" data-sh="${k}"></button></div>`;
-    view(`${back('#ura')}<h1>🤝 仲間機能（準備中）</h1>
+    view(`${back('#settings')}<h1>🤝 仲間機能（準備中）</h1>
       <p class="small">将来、友達申請・ミッション進捗の共有・応援・共同ミッションを追加できるように設計しています。現在はどこにも送信されません。</p>
       <h2>共有設定（初期値はすべてOFF）</h2><div class="list card">${tg('progress','ミッション進捗')}${tg('meals','食事の写真')}${tg('weight','体重')}${tg('photos','全身写真')}</div>`);
     document.querySelectorAll('[data-sh]').forEach(b => b.onclick = async () => { sh[b.dataset.sh] = !sh[b.dataset.sh]; App.settings.share = sh; await DB.set('settings', App.settings); renderSocial(); });
@@ -1367,7 +1394,7 @@
 
   async function renderBadges(){
     const g = App.game;
-    view(`${back('#ura')}<h1>🏅 バッジ</h1><p class="small">体重の増減ではなく、続けた健康行動を評価します。獲得 ${g.badges.length}/${G.BADGES.length}</p>
+    view(`${back('#settings')}<h1>🏅 バッジ</h1><p class="small">体重の増減ではなく、続けた健康行動を評価します。獲得 ${g.badges.length}/${G.BADGES.length}</p>
       <div class="grid2">${G.BADGES.map(b => `<div class="tile" style="${g.badges.includes(b.id) ? '' : 'opacity:.35'}"><span class="em">${b.em}</span><b>${b.name}</b></div>`).join('')}</div>
       <div class="card" style="margin-top:12px"><div class="small">食事ミッション ${g.counts.meal || 0}回・家の食事記録 ${g.counts.homeMeal || 0}回・水分 ${g.counts.drink || 0}回・体重 ${g.counts.weight || 0}回・トレーニング ${g.counts.training || 0}回</div></div>`);
   }
@@ -1402,7 +1429,7 @@
   async function renderImport(){
     const stores = await DB.get('customStores', {});
     const list = Object.values(stores);
-    view(`${back('#ura')}<h1>📥 ChatGPTから店舗を追加</h1>
+    view(`${back('#settings')}<h1>📥 ChatGPTから店舗を追加</h1>
       <div class="card"><b>使い方</b><ol class="small">
         <li>下の「指示文をコピー」→ ChatGPTに貼り付け、最後に店名を書いて送る</li>
         <li>ChatGPTが作ったJSONファイルを、iPhoneの「ファイル」アプリに保存</li>
@@ -1433,7 +1460,7 @@
     const sel = App.tmp.photoSel || (App.tmp.photoSel = new Set());
     const shown = items.slice(0, 60);
     const urls = await Promise.all(shown.map(x => photoURL(x.id)));
-    view(`${back('#ura')}<h1>🖼 写真の整理</h1>
+    view(`${back('#settings')}<h1>🖼 写真の整理</h1>
       <p class="small">写真はこのiPhoneの中だけに保存されています（${items.length}枚）。タップで選んで削除できます。</p>
       <div class="card"><b>まとめて削除</b><div class="chips" style="margin-top:6px">
         <span class="chip" data-old="30:meal,homeMeal,menu,scale,vending,other">30日より前の食事・メニュー・体重計の写真</span>
@@ -1458,7 +1485,7 @@
   /* ================= 場所の登録（自動判定用・任意） ================= */
   async function renderPlaces(){
     const P = App.settings.places || {};
-    view(`${back('#ura')}<h1>🏠 自宅・会社の位置</h1>
+    view(`${back('#settings')}<h1>🏠 自宅・会社の位置</h1>
       <p class="small">位置情報がOFFでも、ホーム画面の場所ボタンで1タップ切り替えできます。ここで位置を登録し、位置情報をONにすると、アプリを開いた時に1回だけ現在地を見て「自宅／会社／外出先」を自動で切り替えます（追跡・履歴保存はしません）。</p>
       <div class="list card">${['home','office'].map(k => `<div class="li"><span class="t">${E.PLACES[k].em} ${E.PLACES[k].label}<div class="tiny">${P[k] ? '登録済み' : '未登録'}</div></span><button class="btn sm" data-reg="${k}">今いる場所で登録</button>${P[k] ? `<button class="btn sm" data-unreg="${k}">削除</button>` : ''}</div>`).join('')}</div>
       <div class="card"><div class="loc"><div style="flex:1"><b>位置情報で自動判定</b><div class="tiny">${App.settings.locationOn ? 'ON' : 'OFF（通常）'}</div></div><button class="toggle ${App.settings.locationOn ? 'on' : ''}" id="pl-t"></button></div></div>`);
@@ -1474,7 +1501,7 @@
     const [path, q] = h.split('?');
     const [name, arg] = path.slice(1).split('/');
     const R = { home:renderHome, setup:renderSetup, morning:renderMorning, meal:() => renderMeal(arg), mealchoose:() => { App.tmp.forceChoose = true; renderMeal(arg); }, bulk:renderBulk, snack:renderSnack, drinks:renderDrinks, train:renderTrain, body:renderBody, nearby:renderNearby,
-      ura:renderUra, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, places: renderPlaces };
+      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, places: renderPlaces };
     try { await (R[name] || renderHome)(); } catch (e) { console.error(e); view(`<div class="warnbox">エラー：${esc(e.message)}</div><button class="btn" onclick="App.go('#home')">ホームへ</button>`); }
   }
   App.route = route;
