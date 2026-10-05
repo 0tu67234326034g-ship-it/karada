@@ -46,6 +46,13 @@
 ${RULE}カロリーは印刷値があればそれを、無ければ推定値として estimated:true を付ける。
 JSON：{"order":[{"name":"メニュー表の表記どおり","qty":1,"kcal":null,"estimated":true}],"drinks":[{"name":"","qty":1}],"advice":"40字以内"}`, blob);
 
+  /* 食品の推定カロリー（AI）。公式値ではないので必ず推定として扱う */
+  S.estimateFood = (blob, info) => gemini(
+    `食事の写真と、本人が入力した情報から、この食品1回分（入力した個数・枚数・トッピング込み）のエネルギーを推定してください。
+入力情報：${JSON.stringify(info)}
+${RULE}推定なので必ず幅を持たせること。写真で量が分からない場合は幅を広くし、noteに理由を書くこと。
+JSON：{"kcal_min":数値,"kcal_max":数値,"note":"30字以内（何を根拠にしたか）"}`, blob);
+
   S.readVending = blob => gemini(`自動販売機または飲料の写真です。読み取れる商品を列挙してください。容量は表示どおり。カフェイン量は表示があれば読み取り、無ければnull。${RULE}\nJSON：{"items":[{"name":"","size":"","priceYen":null,"caffeineMg":null,"sugarFree":null}]}`, blob);
 
   S.readFavMenu = S.readMenu;

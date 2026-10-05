@@ -223,6 +223,7 @@
         <label>アレルゲン未確認の商品</label><select id="s-unv"><option value="0" ${!p.allowUnverifiedAllergen?'selected':''}>使わない（安全側・おすすめ）</option><option value="1" ${p.allowUnverifiedAllergen?'selected':''}>表示する（毎回自分でラベル確認する）</option></select>
         <label>苦手な食べ物（読点区切り 例：パクチー、レバー）</label><input id="s-dis" value="${esc((p.dislikesList||[]).join('、'))}">
         <label>好きな食べ物（任意）</label><input id="s-like" value="${esc(p.likes || '')}">
+        <label>食事を写真で記録した後、内容（パン・ご飯・麺など）をたずねる</label><select id="s-askfood"><option value="1" ${App.settings.askFoodDetail !== false ? 'selected' : ''}>たずねる（おすすめ）</option><option value="0" ${App.settings.askFoodDetail === false ? 'selected' : ''}>たずねない</option></select>
         <label>1食あたりの予算(円)</label><input id="s-b" type="number" inputmode="numeric" value="${esc(p.budget)}">
         <div class="row"><div><label>起床</label><input id="s-wk" type="time" value="${esc(p.wake)}"></div><div><label>就寝</label><input id="s-sl" type="time" value="${esc(p.sleep)}"></div></div>
       </div>
@@ -237,6 +238,7 @@
         dislikesList:$('#s-dis').value.split(/[、,，\s]+/).filter(Boolean), allowUnverifiedAllergen: $('#s-unv').value === '1', likes:$('#s-like').value, budget:+$('#s-b').value || 700, wake:$('#s-wk').value, sleep:$('#s-sl').value
       };
       if (!np.heightCm || !np.weightKg || !np.goalKg) return toast('身長・体重・目標体重を入れてください');
+      App.settings.askFoodDetail = $('#s-askfood').value !== '0'; await DB.set('settings', App.settings);
       const t = E.calcTargets(np);
       const first = !App.prof;
       App.prof = np; await DB.set('profile', np);
@@ -376,7 +378,7 @@
                : `<div class="small">予定・食事・場所を1画面で決めて、今日の作戦を開始しよう。</div><button class="btn primary" onclick="App.go('#morning')">作戦会議を開く</button>`}</div>`
         : `<div class="card op ${theme ? theme + ' special' : 'gold'}" ><div onclick="App.go('#morning')"><div class="kicker">${type === 'golf' ? 'ROUND DAY' : type === 'travel' ? 'AWAY MISSION' : type === 'softball' ? 'GAME DAY' : "TODAY'S OPERATION"}</div>
           <h3>${E.SCHED[type].em} ${E.SCHED[type].label}${day.schedule.golf?.course ? '　' + esc(day.schedule.golf.course) : ''}</h3>
-          <div class="opstats"><div><span>目標</span><b>${t.kcal}<small>kcal</small></b></div><div><span>記録</span><b>${Math.round(eaten.kcal)}<small>kcal${eaten.unknown ? '＋不明' + eaten.unknown : ''}</small></b></div><div><span>たんぱく質</span><b>${Math.round(eaten.protein)}<small>/${t.protein}g</small></b></div></div></div>
+          <div class="opstats"><div><span>目標</span><b>${t.kcal}<small>kcal</small></b></div><div><span>記録${eaten.est ? '（推定含む）' : ''}</span><b>${Math.round(eaten.kcal)}<small>kcal${eaten.unknown ? '＋不明' + eaten.unknown : ''}</small></b></div><div><span>たんぱく質</span><b>${Math.round(eaten.protein)}<small>/${t.protein}g</small></b></div></div></div>
           <div class="btnrow"><button class="btn sm ghost" onclick="App.go('#morning')">📋 作戦を確認</button><button class="btn sm" id="h-replan">⚡ 予定が変わった</button></div>
           ${type === 'golf' || type === 'softball' ? `<hr><div class="small">${type === 'golf' ? '⛳ ラウンド完走ミッション：水分補給（茶店・持参の水）を続けて、最後まで回り切れ！' : '🥎 完走ミッション：こまめな水分・塩分補給で最後まで動き切れ！'}</div>${day.exerciseDone ? `<div class="done" style="margin-top:6px">✓ 完走！</div>` : `<button class="btn ok" id="h-ex">${type === 'golf' ? '🏌️ ラウンド完走！' : '🥎 完走した！'}</button>`}` : ''}
           ${type === 'travel' ? `<hr><div class="small">🧳 遠征ミッション：駅や空港のコンビニ・近くの店からでも指令が出せる。2食クリアで遠征ボーナス！</div>` : ''}
@@ -488,7 +490,19 @@
     trophy: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>'
   };
   function ring(p){ const r = 36, c = 2*Math.PI*r; return `<svg class="ring" viewBox="0 0 84 84"><circle cx="42" cy="42" r="${r}" fill="none" stroke="#2a3042" stroke-width="8"/><circle cx="42" cy="42" r="${r}" fill="none" stroke="url(#g)" stroke-width="8" stroke-linecap="round" stroke-dasharray="${c*p/100} ${c}" transform="rotate(-90 42 42)"/><defs><linearGradient id="g"><stop offset="0" stop-color="#d9b46a"/><stop offset="1" stop-color="#f1d9a2"/></linearGradient></defs><text x="42" y="47" text-anchor="middle" fill="#eef0f5" font-size="17" font-weight="800">${p}%</text></svg>`; }
-  function sumDay(day){ const s = { kcal:0, protein:0, unknown:0 }; for (const m of Object.values(day.meals || {})) if (m.status === 'cleared' && m.mission?.sum) { s.kcal += m.mission.sum.kcal || 0; s.protein += m.mission.sum.protein || 0; s.unknown += m.mission.sum.unknown || 0; } else if (m.status === 'cleared') s.unknown++; for (const sn of (day.snacks || [])) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; } s.complete = s.unknown === 0 && s.kcal > 0; return s; }
+  function sumDay(day){
+    const s = { kcal:0, protein:0, unknown:0, est:0 };
+    for (const m of Object.values(day.meals || {})) {
+      if (m.status !== 'cleared') continue;
+      let counted = false;
+      if (m.mission?.sum && !m.homeRecord) { s.kcal += m.mission.sum.kcal || 0; s.protein += m.mission.sum.protein || 0; s.unknown += m.mission.sum.unknown || 0; counted = true; }
+      if (m.foods?.length) { const fs = F.sumFoods(m.foods); s.kcal += fs.kcal; s.est += fs.estimated; s.unknown += fs.unknown; counted = true; }   // 追加で記録した食べ物（推定分は別に集計）
+      if (!counted) s.unknown++;
+    }
+    for (const sn of (day.snacks || [])) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; }
+    s.kcal = Math.round(s.kcal); s.est = Math.round(s.est);
+    s.complete = s.unknown === 0 && s.kcal > 0; return s;
+  }
   function bindDrinkButtons(){
     document.querySelectorAll('[data-drink]').forEach(b => b.onclick = async () => {
       b.disabled = true;
@@ -530,8 +544,11 @@
       const t = d ? targets(d) : null;
       const score = d ? G.dayScore(d, t) : G.dayScore(null);
       const foods = d ? ['breakfast','lunch','dinner'].map(s => { const m = d.meals?.[s]; if (!m || m.status !== 'cleared') return null;
-        if (m.homeRecord) return { s, txt: '家ごはん' + (m.dishes ? '（' + m.dishes.slice(0, 2).join('・') + '）' : m.memo ? '（' + m.memo.slice(0, 12) + '）' : '') };
-        if (m.mission?.items?.length) return { s, txt: (m.mission.storeName ? E.shortStore(m.mission.storeName) + '：' : '') + m.mission.items.filter(x => x.role !== 'drink').map(x => x.name).join('・') };
+        const fl = (m.foods || []).map(f => `${F.title(f)}［${f.estimated ? '推定' : '公式'}${f.kcal}kcal］`).join('・');
+        if (m.homeRecord && fl) return { s, txt: (m.photoId && !m.late ? '家ごはん：' : '') + fl };
+        if (m.homeRecord) return { s, txt: (m.late ? '記録' : '家ごはん') + (m.dishes ? '（' + m.dishes.slice(0, 2).join('・') + '）' : m.memo ? '（' + m.memo.slice(0, 12) + '）' : '') };
+        if (m.mission?.items?.length) return { s, txt: (m.mission.storeName ? E.shortStore(m.mission.storeName) + '：' : '') + m.mission.items.filter(x => x.role !== 'drink').map(x => x.name).join('・') + (fl ? '＋' + fl : '') };
+        if (fl) return { s, txt: fl };
         return { s, txt: m.mission?.storeName || '記録' }; }).filter(Boolean) : [];
       rows.push({ date, d, score, foods, weight: ws.find(w => w.date === date)?.kg ?? null, steps: d?.steps ?? null, training: (d?.training || []).length,
         eatout: !!d && Object.values(d.meals || {}).some(m => m.source?.type === 'chain' || m.source?.type === 'manual'), drinking: !!d && ((d.alcohol || []).length > 0 || d.schedule?.plan?.dinner === 'drinking'),
@@ -812,7 +829,7 @@
     }
     view(`${back()}
       ${lateNote}${body}
-      ${cleared ? `<div class="okbox">✅ ${esc(m.clearedHM || E.fmtLocal(m.clearedAt))} ミッションクリア！${m.clearNote ? '　' + esc(m.clearNote) : ''}</div>${photo ? `<img class="photo" src="${photo}">` : ''}` : ''}
+      ${cleared ? `<div class="okbox">✅ ${esc(m.clearedHM || E.fmtLocal(m.clearedAt))} ミッションクリア！${m.clearNote ? '　' + esc(m.clearNote) : ''}</div>${foodListHTML(slot, m)}${photo ? `<img class="photo" src="${photo}">` : ''}` : ''}
       ${!cleared && ms?.alternatives?.length ? `<details class="card"><summary><b>ほかの組み合わせ案（${ms.alternatives.length}）</b></summary><div class="tiny" style="margin:6px 0">選び直しは「気分での変更」1回として数えます。</div>${ms.alternatives.map((a, i) => `<div class="item"><div class="nm">${esc(a.cmd)}</div><div class="meta">${yen(a.sum.price)}・${Math.round(a.sum.kcal)}kcal・P${n1(a.sum.protein)}g${a.sum.complete ? '' : '・栄養不明あり'}</div><button class="btn sm" data-alt="${i}">この案にする</button></div>`).join('')}</details>` : ''}
       ${!cleared && ms && !ms.error ? `<div class="card"><b>指令を変更する</b><div class="small">理由を選んでください。「気分」だけ1日1食につき1回まで（残り${Math.max(0, 1 - (m.moodRerolls || 0))}回）。ほかは何度でもOK。</div>
         <div class="chips" style="margin-top:8px">${[['soldout','売り切れ'],['plan','予定変更'],['more','量が足りない'],['sick','体調'],['allergy','アレルギー'],['mood','気分が変わった'],['other','その他']].map(([k, l]) => `<span class="chip ${k === 'mood' && (m.moodRerolls || 0) >= 1 ? 'off' : ''}" data-re="${k}">${l}</span>`).join('')}</div></div>` : ''}
@@ -827,6 +844,7 @@
     document.querySelectorAll('[data-sushi-out]').forEach(b => b.onclick = async () => { const d = await getDay(); const mm = d.meals[slot]; mm.soldout.push(b.dataset.sushiOut); mm.rerollCount++; await issueChain(d, slot, mm.source.id, {}); d.meals[slot].soldout = mm.soldout; await saveDay(d); renderMission(slot); });
     document.querySelectorAll('[data-re]').forEach(b => b.onclick = () => reroll(slot, b.dataset.re));
     bindFav(() => renderMission(slot));
+    bindFoodList(slot, () => renderMission(slot));
     const mp = $('#ms-photo'); if (mp) mp.onclick = () => clearWithPhoto(slot);
     const mn = $('#ms-manual'); if (mn) mn.onclick = () => clearMeal(slot, null, '手動確認');
     const mm = $('#ms-menu'); if (mm) mm.onclick = () => aiMenuChoose(slot, '通常');
@@ -943,6 +961,7 @@
     view(`${back()}<div class="kicker">RECORD ・ ${E.MEAL_LABEL[slot]}</div><h1>${E.MEAL_LABEL[slot]}を記録する</h1>
       <p class="small">いまは ${nowHM()}。${E.MEAL_LABEL[slot]}の時間は過ぎているので、食べていたら写真で記録だけしておこう。これからの食事は${E.MEAL_LABEL[focusMeal(day) || 'dinner']}を優先します。</p>
       <button class="btn primary" id="lt-photo">📷 撮影して記録</button>
+      <button class="btn" onclick="App.tmp.foodDraft=null;App.tmp.foodIdx=null;App.tmp.foodType=null;App.go('#food/${slot}')">🍞 内容（パン・ご飯など）を入れて記録</button>
       <button class="btn" id="lt-nophoto">写真なしで「食べた」と記録</button>
       <button class="btn ghost" id="lt-skip">食べていない</button>
       <button class="btn ghost" onclick="App.tmp.forceChoose=true;App.go('#mealchoose/${slot}')">今から買う・食べに行く（指令を出す）</button>`);
@@ -953,7 +972,7 @@
       if (blob) mm.photoId = await DB.putPhoto(blob, 'meal');
       await saveDay(d);
       await award('homeMeal', E.MEAL_LABEL[slot] + 'を記録', { big:true, sub:'記録できた！' });
-      go('#home');
+      askFoodDetail(slot);
     };
     $('#lt-photo').onclick = async () => { const b = await pickPhoto(); if (b) rec(b, '後から記録'); };
     $('#lt-nophoto').onclick = () => rec(null, '後から記録（写真なし）');
@@ -967,17 +986,152 @@
     await saveDay(d);
     await award('homeMeal', E.MEAL_LABEL[slot] + '（家ごはん）', { big:true, sub:'作ってくれた料理を記録！' });
     if (await S.aiReady()) { try { const r = await S.describeMeal(blob); const d2 = await getDay(); d2.meals[slot].dishes = r.dishes; await saveDay(d2); } catch {} }
-    go('#home');
+    askFoodDetail(slot);
   }
+  /* 写真だけで分からない食品（パン・ご飯・麺・惣菜など）は、必要なら詳しく聞く */
+  async function askFoodDetail(slot){
+    if (App.settings.askFoodDetail === false) return go('#home');
+    const d = await getDay(); const dishes = (d.meals[slot]?.dishes || []).join(' ');
+    const guess = /食パン|トースト/.test(dishes) ? 'shokupan' : /パン|サンド/.test(dishes) ? 'bread' : /ご飯|ライス|丼/.test(dishes) ? 'rice' : /うどん|そば|ラーメン|パスタ|麺|焼きそば/.test(dishes) ? 'noodle' : null;
+    sheet(`<h2>何を食べた？（任意）</h2>
+      <p class="small">パン・ご飯・麺・惣菜は写真だけだと量が分かりません。種類を選ぶと、枚数・量・トッピングを聞いてカロリーの精度を上げます。</p>
+      <div class="grid3">${Object.entries(F.TYPES).map(([k, t]) => `<button class="tile ${k === guess ? 'focus' : ''}" data-ft="${k}" style="min-height:84px"><span class="em">${t.em}</span><b>${t.short}</b></button>`).join('')}</div>
+      <button class="btn" id="fd-skip">今回はスキップ</button>
+      <p class="tiny">毎回聞かないようにするには、設定 →「好み・アレルギー・予算」。</p>`, bg => {
+      bg.querySelectorAll('[data-ft]').forEach(b => b.onclick = () => { bg.remove(); App.tmp.foodDraft = null; App.tmp.foodIdx = null; App.tmp.foodType = b.dataset.ft; go('#food/' + slot); });
+      bg.querySelector('#fd-skip').onclick = () => { bg.remove(); go('#home'); };
+      bg.addEventListener('click', e => { if (e.target === bg) go('#home'); });
+    });
+  }
+  App.askFoodDetail = askFoodDetail;
+
+  /* ================= 食事の詳細記録（公式値を優先・なければ推定） ================= */
+  function foodListHTML(slot, m){
+    const foods = m?.foods || [];
+    const sum = F.sumFoods(foods);
+    return `<div class="card"><div class="kicker">FOOD LOG</div><b>食べた物の内容</b>
+      ${foods.length ? foods.map((f, i) => `<div class="item"><div class="nm">${F.TYPES[f.type]?.em || '🍽'} ${esc(F.title(f))}</div>
+          ${f.where || f.brand ? `<div class="meta">${esc((F.WHERE.find(w => w[0] === f.where) || [])[1] || '')}${f.where && f.brand ? '・' : ''}${esc(f.brand || '')}</div>` : ''}
+          <div class="nut"><span class="${f.estimated ? 'est' : 'off'}">${f.estimated ? '推定' : '公式値'}</span><span>${esc(F.kcalLabel(f))}</span></div>
+          <div><button class="btn sm" data-fedit="${i}">直す</button> <button class="btn sm ghost" data-fdel="${i}">削除</button></div></div>`).join('')
+        : `<p class="small">パン・ご飯・麺・惣菜などは、量や規格を入れるとカロリーの精度が上がります。</p>`}
+      ${foods.length ? `<div class="small" style="margin-top:6px">合計 ${sum.kcal}kcal${sum.estimated ? `（うち推定 ${sum.estimated}kcal・公式値 ${sum.official}kcal）` : '（すべて公式値）'}</div>` : ''}
+      <button class="btn" data-fadd="${slot}">＋ 食べた物を追加</button></div>`;
+  }
+  function bindFoodList(slot, after){
+    document.querySelectorAll('[data-fadd]').forEach(b => b.onclick = () => { App.tmp.foodDraft = null; App.tmp.foodIdx = null; App.tmp.foodType = null; go('#food/' + slot); });
+    document.querySelectorAll('[data-fedit]').forEach(b => b.onclick = async () => { const d = await getDay(); App.tmp.foodIdx = +b.dataset.fedit; App.tmp.foodDraft = JSON.parse(JSON.stringify(d.meals[slot].foods[+b.dataset.fedit])); App.tmp.foodDraft.kcalEdited = true; go('#food/' + slot); });
+    document.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => { if (!confirm('この記録を削除しますか？')) return; const d = await getDay(); d.meals[slot].foods.splice(+b.dataset.fdel, 1); await saveDay(d); after(); });
+  }
+
+  async function renderFood(slot){
+    const day = await getDay();
+    const m = day.meals[slot] || {};
+    if (!App.tmp.foodDraft) App.tmp.foodDraft = { type: App.tmp.foodType || null, count: 1, toppings: {}, where: null, brand: '', product: '' };
+    const dr = App.tmp.foodDraft;
+    const editing = App.tmp.foodIdx != null;
+    const backTo = '#meal/' + slot;
+    if (!dr.type) {
+      view(`${back(backTo)}<div class="kicker">FOOD LOG ・ ${E.MEAL_LABEL[slot]}</div><h1>何を食べた？</h1>
+        <div class="grid3">${Object.entries(F.TYPES).map(([k, t]) => `<button class="tile" data-ft="${k}"><span class="em">${t.em}</span><b>${t.short}</b></button>`).join('')}</div>`);
+      document.querySelectorAll('[data-ft]').forEach(b => b.onclick = () => { dr.type = b.dataset.ft; renderFood(slot); });
+      return;
+    }
+    const T = F.TYPES[dr.type];
+    if (T.sizes && !dr.size) dr.size = T.kinds ? 'm' : dr.type === 'shokupan' ? '6' : dr.type === 'bread' ? T.sizes[0][0] : (T.sizes[1] || T.sizes[0])[0];
+    if (T.kinds && !dr.kind) dr.kind = T.kinds[0][0];
+    const chips = (k, opts, cur) => `<div class="chips" data-fk="${k}">${opts.map(([v, l]) => `<span class="chip ${String(cur) === String(v) ? 'on' : ''}" data-v="${esc(v)}">${esc(l)}</span>`).join('')}</div>`;
+    const sugg = F.suggestions(App.data);
+    const unitWord = T.unit === '枚' ? '枚数' : T.unit === '杯' ? '量（杯）' : T.unit.includes('/') ? '量（個・人前）' : '個数';
+    view(`${back(backTo)}<div class="kicker">FOOD LOG ・ ${E.MEAL_LABEL[slot]}</div><h1>${T.em} ${T.label}${editing ? 'を直す' : 'を記録'}</h1>
+      <div class="card"><b>どこで買った？</b>${chips('where', F.WHERE, dr.where)}
+        ${T.askBrand ? `<label>店名・メーカー・ブランド（分かれば）</label><input id="fd-brand" value="${esc(dr.brand || '')}" placeholder="${dr.type === 'shokupan' ? '例：メーカー名、パン屋の名前' : '例：セブン-イレブン、○○ベーカリー'}">` : ''}
+        <label>商品名（分かれば）</label><input id="fd-product" list="fd-sugg" value="${esc(dr.product || '')}" placeholder="登録済みの商品なら公式値を使います">
+        <datalist id="fd-sugg">${sugg.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        <div id="fd-official" class="tiny" style="margin-top:6px"></div></div>
+      <div class="card">
+        ${T.kinds ? `<b>${T.kindLabel}</b>${chips('kind', T.kinds.map(k => [k[0], k[1]]), dr.kind)}<b style="display:block;margin-top:14px">${T.sizeLabel}</b>${chips('size', T.sizes.map(x => [x[0], x[1]]), dr.size)}`
+          : T.sizes ? `<b>${T.sizeLabel}</b>${chips('size', T.sizes.map(x => [x[0], x[1]]), dr.size)}` : ''}
+        ${T.manual ? `<label>カロリーが分かれば（パッケージの表示など）</label><input id="fd-manual" type="number" inputmode="numeric" value="${esc(dr.manualKcal ?? '')}" placeholder="例 320">` : ''}
+        <b style="display:block;margin-top:14px">食べた${unitWord}</b>
+        <div class="stepper"><button class="btn sm" data-cnt="-0.5">−</button><input id="fd-count" type="number" step="0.5" inputmode="decimal" value="${dr.count}"><button class="btn sm" data-cnt="0.5">＋</button></div></div>
+      ${T.toppings.length ? `<div class="card"><b>のせた物・つけた物</b><div class="small">タップするたびに1回分ずつ追加（3回の次は0に戻ります）。</div>
+        <div class="chips">${T.toppings.map(id => { const tp = F.TOPPINGS[id]; const n = dr.toppings[id] || 0; return `<span class="chip ${n ? 'on' : ''}" data-tp="${id}">${tp.label}${n ? ` ×${n}` : ''}<span class="tiny" style="margin-left:5px">${tp.unit}</span></span>`; }).join('')}</div></div>` : ''}
+      <div class="card gold" id="fd-result"></div>
+      ${await S.aiReady() ? `<button class="btn" id="fd-ai">🤖 写真と入力内容からAIで推定</button>` : ''}`,
+      `<button class="btn primary" id="fd-save">${editing ? '直して保存' : 'この内容で記録'}</button>`);
+    const update = () => {
+      const off = F.findOfficial(dr.product, App.data);
+      const o = $('#fd-official');
+      if (o) o.innerHTML = off ? (off.kcal != null ? `✅ 公式データあり：${esc(off.store)}「${esc(off.name)}」1${T.unit}あたり ${off.kcal}kcal（確認日 ${esc(off.verifiedAt || '不明')}）` : `登録データはありますが、公式の栄養成分が未登録です${off.note ? '（' + esc(off.note) + '）' : ''}。量から推定します。`) : (dr.product ? '登録済みの商品には見つかりません。量から推定します。' : '');
+      const c = F.calc(dr, off);
+      dr._calc = c; dr._off = off;
+      if (!dr.kcalEdited) dr.kcal = c.suggested;
+      $('#fd-result').innerHTML = `<div class="kicker">${c.onlyOfficial ? 'OFFICIAL' : 'ESTIMATE'}</div>
+        ${!c.has ? `<div class="small">カロリーを出すには、${T.manual ? 'カロリーを入力するか、AIで推定してください' : '量を選んでください'}。</div>` :
+          c.onlyOfficial ? `<div class="kc"><span class="pill ok">公式値</span><b>${c.official}kcal</b></div>` :
+          `${c.official ? `<div class="kc"><span class="pill ok">公式値</span><b>${c.official}kcal</b></div><div class="kc"><span class="pill warn">推定</span><b>＋ ${c.estMin}〜${c.estMax}kcal</b></div>` : `<div class="kc"><span class="pill warn">推定</span><b>${c.min}〜${c.max}kcal</b></div>`}`}
+        ${c.has ? `<label>記録値（kcal）${c.onlyOfficial ? '' : '　※推定として保存されます'}</label><input id="fd-kcal" type="number" inputmode="numeric" value="${dr.kcal ?? ''}">` : ''}
+        <div class="tiny" style="margin-top:8px">根拠：${esc(c.basis || '—')}${c.onlyOfficial ? '' : '。推定値は公式値ではありません。'}</div>`;
+      const k = $('#fd-kcal'); if (k) k.oninput = () => { dr.kcal = k.value === '' ? null : +k.value; dr.kcalEdited = true; };
+    };
+    update();
+    const reset = () => { dr.kcalEdited = false; dr.ai = null; };
+    const bindText = (id, key, num) => { const el = $(id); if (el) el.oninput = () => { dr[key] = num ? (el.value === '' ? null : +el.value) : el.value; if (key !== 'brand') reset(); update(); }; };
+    bindText('#fd-brand', 'brand'); bindText('#fd-product', 'product'); bindText('#fd-manual', 'manualKcal', true);
+    const cnt = $('#fd-count'); cnt.oninput = () => { dr.count = Math.max(0.5, +cnt.value || 1); reset(); update(); };
+    document.querySelectorAll('[data-cnt]').forEach(b => b.onclick = () => { dr.count = Math.max(0.5, Math.round(((+dr.count || 1) + +b.dataset.cnt) * 2) / 2); cnt.value = dr.count; reset(); update(); });
+    document.querySelectorAll('[data-fk]').forEach(g => g.onclick = e => { const c = e.target.closest('.chip'); if (!c) return; dr[g.dataset.fk] = c.dataset.v; if (g.dataset.fk !== 'where') reset(); App.tmp.keepScroll = window.scrollY; renderFood(slot); });
+    document.querySelectorAll('[data-tp]').forEach(c => c.onclick = () => { const id = c.dataset.tp; dr.toppings[id] = ((dr.toppings[id] || 0) + 1) % 4; reset(); App.tmp.keepScroll = window.scrollY; renderFood(slot); });
+    const ai = $('#fd-ai'); if (ai) ai.onclick = async () => {
+      let blob = m.photoId ? await DB.getPhoto(m.photoId) : null;
+      if (!blob) { blob = await pickPhoto(); if (!blob) return; }
+      toast('AIが推定しています…');
+      try {
+        const r = await S.estimateFood(blob, { 種類:T.label, 店:dr.brand, 商品名:dr.product, 規格:(T.sizes?.find(x => x[0] === dr.size) || [])[1], 種類詳細:(T.kinds?.find(x => x[0] === dr.kind) || [])[1], 数量:dr.count + T.unit, トッピング:Object.entries(dr.toppings).filter(([, n]) => n).map(([id, n]) => F.TOPPINGS[id].label + '×' + n) });
+        if (r.kcal_min == null || r.kcal_max == null) throw new Error('AIが推定できませんでした');
+        dr.ai = { min: Math.round(Math.min(r.kcal_min, r.kcal_max)), max: Math.round(Math.max(r.kcal_min, r.kcal_max)), note: r.note || '' }; dr.kcalEdited = false; update(); toast('AIの推定を反映しました（推定値です）');
+      } catch (e) { toast(e.message); }
+    };
+    $('#fd-save').onclick = async () => {
+      update();
+      const c = dr._calc, off = dr._off;
+      if (!c.has && dr.kcal == null) return toast('量を選ぶか、カロリーを入力してください');
+      const st = E.stamp();
+      const kcal = dr.kcal != null && dr.kcal !== '' ? Math.round(+dr.kcal) : c.suggested;
+      // 公式値をそのまま使った時だけ「公式」。少しでも推定や手直しが入れば推定として保存
+      const estimated = !(c.onlyOfficial && kcal === c.official);
+      const entry = { type: dr.type, where: dr.where, brand: dr.brand || '', product: dr.product || '', size: dr.size || null, kind: dr.kind || null, count: +dr.count || 1, toppings: { ...dr.toppings },
+        manualKcal: dr.manualKcal ?? null, ai: dr.ai || null,
+        kcal, estimated, min: c.min, max: c.max, estMin: c.estMin, estMax: c.estMax, officialKcal: c.official || null,
+        officialRef: off && off.kcal != null ? { id: off.id, name: off.name, store: off.store, url: off.url || null, verifiedAt: off.verifiedAt || null } : null,
+        source: dr.ai ? 'ai' : !estimated ? 'official' : c.official ? 'official+estimate' : T.manual && dr.manualKcal != null ? 'manual' : 'estimate',
+        basis: c.basis, at: st.hm, ts: st.ts };
+      const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
+      mm.foods = mm.foods || [];
+      if (editing && mm.foods[App.tmp.foodIdx]) mm.foods[App.tmp.foodIdx] = entry; else mm.foods.push(entry);
+      const firstRecord = mm.status !== 'cleared';
+      if (firstRecord) Object.assign(mm, { homeRecord: !mm.mission, status:'cleared', clearNote:'内容を記録', clearedAt: st.iso, clearedTs: st.ts, clearedHM: st.hm });
+      const bonusOnce = !mm.foodXp; mm.foodXp = true;
+      await saveDay(d);
+      App.tmp.foodDraft = null; App.tmp.foodIdx = null; App.tmp.foodType = null;
+      if (firstRecord) await award('homeMeal', E.MEAL_LABEL[slot] + 'を記録', { big:true, sub:'内容まで記録！' });
+      else if (bonusOnce && !editing) await award('foodDetail', '食事の内容を記録');
+      else toast('保存しました');
+      go('#meal/' + slot);
+    };
+  }
+
   async function renderHomeMeal(slot){
     const day = await getDay(); const m = day.meals[slot] || {};
     const photo = await photoURL(m.photoId);
     view(`${back()}<div class="kicker" style="margin-top:6px">MISSION ・ ${E.MEAL_LABEL[slot]}</div><h1>🏠 家ごはんを撮影しろ！</h1>
       <p class="small">作ってくれた料理をそのまま楽しもう。写真で記録するだけでOK。おかわりする時は、ご飯よりおかずを。</p>
       ${photo ? `<img class="photo" src="${photo}">` : ''}${m.dishes ? `<div class="card"><b>記録：</b>${esc(m.dishes.join('、'))}</div>` : ''}
-      ${m.status === 'cleared' ? `<div class="okbox">✅ 記録済み</div>` : ''}
+      ${m.status === 'cleared' ? `<div class="okbox">✅ ${esc(m.clearedHM || '')} 記録済み</div>${foodListHTML(slot, m)}` : ''}
       <label>メモ（任意）</label><input id="hm-note" value="${esc(m.memo || '')}" placeholder="例：焼き魚、味噌汁、ご飯半分">`,
       m.status === 'cleared' ? `<button class="btn" onclick="App.go('#home')">ホームへ</button>` : `<button class="btn primary" id="hm-photo">📷 撮影して記録</button>`);
+    bindFoodList(slot, () => renderHomeMeal(slot));
     const b = $('#hm-photo'); if (!b) return;
     b.onclick = async () => {
       const blob = await pickPhoto(); if (!blob) return;
@@ -1563,7 +1717,7 @@
     const [path, q] = h.split('?');
     const [name, arg] = path.slice(1).split('/');
     const R = { home:renderHome, setup:renderSetup, morning:renderMorning, meal:() => renderMeal(arg), mealchoose:() => { App.tmp.forceChoose = true; renderMeal(arg); }, bulk:renderBulk, snack:renderSnack, drinks:renderDrinks, train:renderTrain, body:renderBody, nearby:renderNearby,
-      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, late: () => renderLate(arg), places: renderPlaces };
+      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, late: () => renderLate(arg), food: () => renderFood(arg), places: renderPlaces };
     try { await (R[name] || renderHome)(); } catch (e) { console.error(e); view(`<div class="warnbox">エラー：${esc(e.message)}</div><button class="btn" onclick="App.go('#home')">ホームへ</button>`); }
   }
   App.route = route;

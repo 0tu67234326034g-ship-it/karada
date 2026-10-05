@@ -4,7 +4,7 @@
 (function(){
   const G = {};
 
-  G.XP = { meal:30, homeMeal:25, drink:5, weight:20, steps:15, training:30, snackLog:10, bodyPhoto:10, coffee:0 };
+  G.XP = { foodDetail:5, meal:30, homeMeal:25, drink:5, weight:20, steps:15, training:30, snackLog:10, bodyPhoto:10, coffee:0 };
   G.BONUS = {
     planStart:  { xp:10, label:'作戦開始ボーナス' },
     perfect:    { xp:50, label:'PERFECT DAY ボーナス' },
