@@ -351,6 +351,7 @@
     const lp = lastPlan();
     const theme = type === 'golf' ? 'theme-golf' : type === 'travel' ? 'theme-travel' : type === 'softball' ? 'theme-golf' : '';
     const fm = focusMeal(day);
+    const spend = App.settings.kakeiboHome !== false ? await spendSummary() : null;
     const mealState = s => {
       const m = day.meals[s]; const pl = day.schedule?.plan?.[s]; const ph = mealPhase(day, s);
       if (m?.status === 'cleared') return `<span class="done">✓ ${m.clearedHM ? esc(m.clearedHM) + ' 達成' : '達成'}</span>`;
@@ -402,6 +403,7 @@
         <button class="tile" id="h-body"><span class="em">⚖️</span><b>体重・歩数</b><span class="small">${day.weightLogged ? '<span class="done">✓ 体重</span>' : '朝の計測'}${day.steps != null ? '・' + day.steps.toLocaleString() + '歩' : ''}</span></button>
         <button class="tile" onclick="App.go('#nearby')"><span class="em">📍</span><b>現在地から探す</b><span class="small">近くのお店</span></button>
       </div>
+      ${spend ? `<div class="kstrip"><button class="ks-main" onclick="App.go('#kakeibo')" aria-label="食費ログ"><span class="ks-ic">💴</span><span class="ks-t"><span>今日</span><b>${L.yen(spend.today)}</b></span><span class="ks-t"><span>今月の食費</span><b>${L.yen(spend.month)}</b></span><span class="chev">›</span></button><button class="ks-add" onclick="App.tmp.buyDraft=null;App.go('#buy')" aria-label="買った物を記録">＋</button></div>` : ''}
       <h2>今日の達成状況</h2>
       <div class="card" onclick="App.go('#log')"><div class="progress-wrap">${ring(sc.pct)}<div style="flex:1;min-width:0">
         <div class="small">食事 ${sc.mealsDone}/3・水分 ${sc.drinkDone}/${sc.drinkTotal}・体重 ${day.weightLogged ? '✓' : '—'}・${['golf','softball'].includes(type) ? '完走 ' + (day.exerciseDone ? '✓' : '—') : '歩く/運動 ' + (sc.parts.move >= 1 ? '✓' : day.steps != null ? Math.round(sc.parts.move * 100) + '%' : '—')}</div>
@@ -499,7 +501,8 @@
       if (m.foods?.length) { const fs = F.sumFoods(m.foods); s.kcal += fs.kcal; s.est += fs.estimated; s.unknown += fs.unknown; counted = true; }   // 追加で記録した食べ物（推定分は別に集計）
       if (!counted) s.unknown++;
     }
-    for (const sn of (day.snacks || [])) if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; }
+    for (const sn of (day.snacks || [])) { if (sn.sum) { s.kcal += sn.sum.kcal || 0; s.protein += sn.sum.protein || 0; } else if (sn.via === 'buy') s.unknown++; }
+    for (const dl of (day.drinkLog || [])) { if (dl.kcal == null) s.unknown++; else { s.kcal += dl.kcal; if (dl.estimated) s.est += dl.kcal; } }   // 買った物から「飲んだ」と記録した分だけ
     s.kcal = Math.round(s.kcal); s.est = Math.round(s.est);
     s.complete = s.unknown === 0 && s.kcal > 0; return s;
   }
@@ -950,8 +953,11 @@
   async function clearMeal(slot, photoId, note){
     const day = await getDay(); const m = day.meals[slot];
     m.status = 'cleared'; m.photoId = photoId || m.photoId; m.clearNote = note; { const st = E.stamp(); m.clearedAt = st.iso; m.clearedTs = st.ts; m.clearedHM = st.hm; }
+    let buy = null;
+    if (!m.homeRecord && !m.buyId) { try { buy = await buyFromMission(slot, m.mission); if (buy) m.buyId = buy.id; } catch (e) { console.warn(e); } }
     await saveDay(day);
     await award(m.homeRecord ? 'homeMeal' : 'meal', E.MEAL_LABEL[slot] + 'ミッション', { big:true, sub: m.homeRecord ? '家ごはんを記録！' : (m.mission?.storeName ? E.shortStore(m.mission.storeName) + 'の指令を完遂！' : '指令どおり！') });
+    if (buy) toast(`💴 食費ログに ${L.yen(buy.paid)}（登録価格）を記録${buy.priceUnknown ? '・価格不明あり' : ''}。違えば食費ログで直せます`);
     go('#home');
   }
 
@@ -1042,6 +1048,8 @@
     if (T.kinds && !dr.kind) dr.kind = T.kinds[0][0];
     const chips = (k, opts, cur) => `<div class="chips" data-fk="${k}">${opts.map(([v, l]) => `<span class="chip ${String(cur) === String(v) ? 'on' : ''}" data-v="${esc(v)}">${esc(l)}</span>`).join('')}</div>`;
     const sugg = F.suggestions(App.data);
+    const bcat = await L.catalog();
+    if (dr.buyOn == null) dr.buyOn = App.settings.buyWithFood === true && dr.where !== 'home';
     const unitWord = T.unit === '枚' ? '枚数' : T.unit === '杯' ? '量（杯）' : T.unit.includes('/') ? '量（個・人前）' : '個数';
     view(`${back(backTo)}<div class="kicker">FOOD LOG ・ ${E.MEAL_LABEL[slot]}</div><h1>${T.em} ${T.label}${editing ? 'を直す' : 'を記録'}</h1>
       <div class="card"><b>どこで買った？</b>${chips('where', F.WHERE, dr.where)}
@@ -1057,6 +1065,8 @@
         <div class="stepper"><button class="btn sm" data-cnt="-0.5">−</button><input id="fd-count" type="number" step="0.5" inputmode="decimal" value="${dr.count}"><button class="btn sm" data-cnt="0.5">＋</button></div></div>
       ${T.toppings.length ? `<div class="card"><b>のせた物・つけた物</b><div class="small">タップするたびに1回分ずつ追加（3回の次は0に戻ります）。</div>
         <div class="chips">${T.toppings.map(id => { const tp = F.TOPPINGS[id]; const n = dr.toppings[id] || 0; return `<span class="chip ${n ? 'on' : ''}" data-tp="${id}">${tp.label}${n ? ` ×${n}` : ''}<span class="tiny" style="margin-left:5px">${tp.unit}</span></span>`; }).join('')}</div></div>` : ''}
+      ${!editing ? `<div class="card"><div class="li" style="padding:0;border:0"><span class="t"><b>💴 購入金額も記録する</b><div class="tiny">食費ログに入ります（食べた分は上の記録だけ）</div></span><button class="toggle ${dr.buyOn ? 'on' : ''}" id="fd-buy" aria-label="購入金額も記録する"></button></div>
+        ${dr.buyOn ? `<label>支払った金額（合計・円）</label><input id="fd-price" type="number" inputmode="numeric" value="${dr.buyPrice ?? ''}" placeholder="例 168"><label>店名（任意）</label><input id="fd-bstore" value="${esc(dr.buyStore ?? dr.brand ?? '')}" placeholder="例：○○ベーカリー">` : ''}</div>` : ''}
       <div class="card gold" id="fd-result"></div>
       ${await S.aiReady() ? `<button class="btn" id="fd-ai">🤖 写真と入力内容からAIで推定</button>` : ''}`,
       `<button class="btn primary" id="fd-save">${editing ? '直して保存' : 'この内容で記録'}</button>`);
@@ -1083,6 +1093,13 @@
     document.querySelectorAll('[data-cnt]').forEach(b => b.onclick = () => { dr.count = Math.max(0.5, Math.round(((+dr.count || 1) + +b.dataset.cnt) * 2) / 2); cnt.value = dr.count; reset(); update(); });
     document.querySelectorAll('[data-fk]').forEach(g => g.onclick = e => { const c = e.target.closest('.chip'); if (!c) return; dr[g.dataset.fk] = c.dataset.v; if (g.dataset.fk !== 'where') reset(); App.tmp.keepScroll = window.scrollY; renderFood(slot); });
     document.querySelectorAll('[data-tp]').forEach(c => c.onclick = () => { const id = c.dataset.tp; dr.toppings[id] = ((dr.toppings[id] || 0) + 1) % 4; reset(); App.tmp.keepScroll = window.scrollY; renderFood(slot); });
+    const fb = $('#fd-buy'); if (fb) fb.onclick = () => {
+      dr.buyOn = !dr.buyOn;
+      if (dr.buyOn && dr.buyPrice == null) { const off = F.findOfficial(dr.product, App.data); const lp = L.lastPrice(bcat, dr.product, dr.brand); const ref = dr.product ? L.matchProduct(dr.product, App.data, dr.brand) : null;
+        const unit = lp ?? (ref?.priceYen != null ? Math.round(ref.priceYen) : null); if (unit != null) dr.buyPrice = Math.round(unit * (+dr.count || 1)); }
+      App.tmp.keepScroll = window.scrollY; renderFood(slot); };
+    const fp = $('#fd-price'); if (fp) fp.oninput = () => { dr.buyPrice = fp.value === '' ? null : +fp.value; };
+    const fs = $('#fd-bstore'); if (fs) fs.oninput = () => { dr.buyStore = fs.value; };
     const ai = $('#fd-ai'); if (ai) ai.onclick = async () => {
       let blob = m.photoId ? await DB.getPhoto(m.photoId) : null;
       if (!blob) { blob = await pickPhoto(); if (!blob) return; }
@@ -1106,7 +1123,17 @@
         kcal, estimated, min: c.min, max: c.max, estMin: c.estMin, estMax: c.estMax, officialKcal: c.official || null,
         officialRef: off && off.kcal != null ? { id: off.id, name: off.name, store: off.store, url: off.url || null, verifiedAt: off.verifiedAt || null } : null,
         source: dr.ai ? 'ai' : !estimated ? 'official' : c.official ? 'official+estimate' : T.manual && dr.manualKcal != null ? 'manual' : 'estimate',
-        basis: c.basis, at: st.hm, ts: st.ts };
+        basis: c.basis, at: st.hm, ts: st.ts, ...(dr.buyRef ? { buyRef: dr.buyRef } : {}), ...(dr.buyId ? { buyId: dr.buyId } : {}) };
+      let buy = null;
+      if (!editing && dr.buyOn && +dr.buyPrice > 0) {
+        const cnt = +dr.count || 1, ref = dr.product ? L.matchProduct(dr.product, App.data, dr.buyStore || dr.brand) : null;
+        buy = await L.save({ where: WHERE_FROM_FOOD[dr.where] || 'other', store: (dr.buyStore ?? dr.brand ?? '').trim(), date: st.date, hm: st.hm, source:'food', mealSlot: slot, mealDate: st.date,
+          paid: Math.round(+dr.buyPrice), paidEdited: true,
+          items: [{ iid: L.rid('i'), name: dr.product || T.label, qty: cnt, unitPrice: Math.round(+dr.buyPrice / cnt), cat: 'meal', mealSlot: slot, productRef: ref ? L.refOf(ref) : null,
+            consumed: [{ cid: L.rid('c'), qty: cnt, date: st.date, at: st.hm, ts: st.ts, kind: 'food', slot }] }] });
+        entry.buyId = buy.id;
+      }
+      if (!editing) { App.settings.buyWithFood = !!dr.buyOn; DB.set('settings', App.settings); }
       const d = await getDay(); const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
       mm.foods = mm.foods || [];
       if (editing && mm.foods[App.tmp.foodIdx]) mm.foods[App.tmp.foodIdx] = entry; else mm.foods.push(entry);
@@ -1118,6 +1145,7 @@
       if (firstRecord) await award('homeMeal', E.MEAL_LABEL[slot] + 'を記録', { big:true, sub:'内容まで記録！' });
       else if (bonusOnce && !editing) await award('foodDetail', '食事の内容を記録');
       else toast('保存しました');
+      if (buy) setTimeout(() => toast(`💴 食費ログに ${L.yen(buy.paid)} を記録`), 1800);
       go('#meal/' + slot);
     };
   }
@@ -1210,7 +1238,9 @@
       $('#sn-again').onclick = () => b.click();
       bindFav(null);
       $('#sn-eat').onclick = async () => {
-        const d = await getDay(); d.snacks.push({ at: nowHM(), items: ms.items.map(i => i.name), sum: ms.sum, via:'helper' }); await saveDay(d);
+        let buy = null; try { buy = await buyFromMission(null, ms, 'snack'); } catch (e) { console.warn(e); }
+        const d = await getDay(); d.snacks.push({ at: nowHM(), items: ms.items.map(i => i.name), sum: ms.sum, via:'helper', buyId: buy?.id || null }); await saveDay(d);
+        if (buy) setTimeout(() => toast(`💴 食費ログに ${L.yen(buy.paid)} を記録`), 1800);
         const nice = d.snacks.filter(x => x.via === 'helper').length <= 2;   // 1日2回までボーナス（我慢ではなく選び方を評価）
         await award('snackLog', 'お助け間食', { bonus: nice ? ['snackNice'] : [], title:'ナイスチョイス！', sub:'ちょうどいい1品を選べた' });
         go('#home');
@@ -1405,6 +1435,9 @@
         row('#import', '📥', 'ChatGPTから店舗を追加（JSON取り込み）', imported ? `取り込み済み ${imported}店` : 'チェーン店・個人店・コンビニ商品を一括追加'),
         row('#products', '📦', '商品情報の追加・更新', `${App.data.products.length}品・販売終了の切り替え`)
       ])}
+      ${group('記録', [
+        row('#kakeibo', '💴', '食費ログ', '食事・飲み物・お菓子の支出・レシート読み取り')
+      ])}
       ${group('自分のこと', [
         row('#setup', '🍽', '好み・アレルギー・予算', '体の情報・目標・起床/就寝もここ'),
         row('#places', '🏠', '自宅・会社の位置', (P.home || P.office ? '登録済み' : '未登録') + '・位置情報 ' + (st.locationOn ? 'ON' : 'OFF'))
@@ -1568,7 +1601,7 @@
     const st = await DB.get('settings', {});
     view(`${back(App.prof ? '#settings' : '#setup')}<h1>💾 バックアップと復元</h1>
       <p class="small">データはこのiPhoneの中だけにあります。機種変更やSafariのデータ削除に備えて、定期的にバックアップしてください（「ファイル」アプリやiCloud Driveに保存できます）。${st.lastBackup ? `<br>前回のバックアップ：${st.lastBackup}` : ''}</p>
-      <div class="card"><b>含まれるもの</b><div class="small">プロフィール・設定・毎日の記録（食事・飲み物・トレーニング）・体重・取り込んだ店舗・追加商品・行きつけ店・自販機・ゲームの進み具合・（選んだ場合）写真</div>
+      <div class="card"><b>含まれるもの</b><div class="small">プロフィール・設定・毎日の記録（食事・飲み物・トレーニング）・食費ログ（購入記録・よく使う店と商品）・体重・取り込んだ店舗・追加商品・行きつけ店・自販機・ゲームの進み具合・（選んだ場合）写真</div>
       <div class="small" style="margin-top:4px"><b>含まれないもの</b>：GeminiのAPIキー（秘密情報のため。復元後に再入力が必要な場合があります）</div></div>
       <button class="btn primary" id="bk-a">写真も含めてバックアップ</button><button class="btn" id="bk-b">記録だけバックアップ（軽量）</button>
       <h2>復元</h2>
@@ -1581,7 +1614,7 @@
       let info; try { info = await DB.inspectBackup(f); } catch (e) { return sheet(`<h2>このファイルは使えません</h2><div class="warnbox">${esc(e.message)}<br>データは変更していません。</div>`); }
       sheet(`<h2>復元の確認</h2><div class="list card">
           <div class="li"><span class="t">作成日時</span><span class="small">${esc(info.exportedAt ? E.ymd(new Date(info.exportedAt)) + ' ' + E.fmtLocal(info.exportedAt) : '不明')}</span></div>
-          <div class="li"><span class="t">項目数</span><b>${info.keys}</b></div><div class="li"><span class="t">記録した日数</span><b>${info.days}</b></div><div class="li"><span class="t">写真</span><b>${info.photos}枚</b></div>
+          <div class="li"><span class="t">項目数</span><b>${info.keys}</b></div><div class="li"><span class="t">記録した日数</span><b>${info.days}</b></div><div class="li"><span class="t">食費ログ</span><b>${info.buys ?? 0}件</b></div><div class="li"><span class="t">写真</span><b>${info.photos}枚</b></div>
           <div class="li"><span class="t">プロフィール</span><b>${info.hasProfile ? 'あり' : 'なし'}</b></div></div>
         <button class="btn" id="rs-pre">① 今のデータを先にバックアップ（おすすめ）</button>
         <button class="btn primary" id="rs-go">② 復元する</button><button class="btn ghost" id="rs-no">やめる</button>`, bg => {
@@ -1667,7 +1700,7 @@
   }
 
   /* ================= 写真の整理 ================= */
-  const KIND = { meal:'食事', homeMeal:'家の食事', menu:'メニュー', scale:'体重計', body:'全身', vending:'自販機', other:'その他' };
+  const KIND = { meal:'食事', homeMeal:'家の食事', menu:'メニュー', scale:'体重計', body:'全身', vending:'自販機', receipt:'レシート', other:'その他' };
   async function renderPhotos(){
     const keys = await DB.photoKeys();
     const idx = await DB.get('photoIndex', []);
@@ -1679,8 +1712,8 @@
     view(`${back('#settings')}<h1>🖼 写真の整理</h1>
       <p class="small">写真はこのiPhoneの中だけに保存されています（${items.length}枚）。タップで選んで削除できます。</p>
       <div class="card"><b>まとめて削除</b><div class="chips" style="margin-top:6px">
-        <span class="chip" data-old="30:meal,homeMeal,menu,scale,vending,other">30日より前の食事・メニュー・体重計の写真</span>
-        <span class="chip" data-old="90:meal,homeMeal,menu,scale,vending,other">90日より前（全身写真以外）</span></div>
+        <span class="chip" data-old="30:meal,homeMeal,menu,scale,vending,receipt,other">30日より前の食事・メニュー・体重計・レシートの写真</span>
+        <span class="chip" data-old="90:meal,homeMeal,menu,scale,vending,receipt,other">90日より前（全身写真以外）</span></div>
         <p class="tiny">全身写真は自動では消しません。体重の記録自体は写真を消しても残ります。</p></div>
       <div class="thumbs">${shown.map((x, i) => `<div class="thumb ${sel.has(x.id) ? 'sel' : ''}" data-ph="${x.id}">${urls[i] ? `<img src="${urls[i]}">` : ''}<div class="cap">${KIND[x.kind] || 'その他'}・${x.at ? E.fmtLocal(x.at, true) : '日付不明'}</div></div>`).join('')}</div>
       ${items.length > 60 ? `<p class="tiny">新しい順に60枚まで表示しています。</p>` : ''}`,
@@ -1710,6 +1743,319 @@
     $('#pl-t').onclick = async () => { App.settings.locationOn = !App.settings.locationOn; await DB.set('settings', App.settings); renderPlaces(); };
   }
 
+  /* ================= 食費ログ（食事・飲み物・お菓子の支出だけ） =================
+     「買った」記録と「食べた／飲んだ」記録は別。購入しただけでは摂取カロリーに加算しない */
+  const SLOT_EM = { breakfast:'🌅', lunch:'🍱', dinner:'🌙' };
+  const WHERE_FROM_FOOD = { conv:'conv', super:'super', bakery:'bakery', restaurant:'restaurant', other:'other' };
+  async function spendSummary(){
+    const R = L.ranges();
+    const m = await L.list(R.month[0], R.month[1]);
+    return { month: m.reduce((s, r) => s + (r.paid || 0), 0), today: m.filter(r => r.date === R.today[0]).reduce((s, r) => s + (r.paid || 0), 0) };
+  }
+  function slotByTime(hm = nowHM()){ return hm < '10:30' ? 'breakfast' : hm < '15:30' ? 'lunch' : 'dinner'; }
+  function newBuyDraft(over = {}){ const st = E.stamp(); return { where:null, store:'', date:st.date, hm:st.hm, items:[], paid:null, paidEdited:false, mealSlot:null, source:'manual', eatNow:{}, ...over }; }
+  function addDraftItem(dr, name, opts = {}){
+    const ref = L.matchProduct(name, App.data, dr.store);
+    const price = opts.price ?? L.lastPrice(App.tmp.buyCat || { items:[] }, name, dr.store) ?? (ref?.priceYen != null ? Math.round(ref.priceYen) : null);
+    dr.items.push({ iid:L.rid('i'), name, qty:opts.qty || 1, unitPrice:price, cat:opts.cat || L.guessCat(name, ref), productRef: ref ? L.refOf(ref) : null, consumed:[] });
+  }
+
+  /* 購入の入力（手入力・レシートAIの確認・修正を同じ画面で） */
+  async function renderBuy(id){
+    if (!id && App.tmp.buyDraft?.id) App.tmp.buyDraft = null;
+    App.tmp.buyCat = await L.catalog();
+    const cat = App.tmp.buyCat;
+    if (id && (!App.tmp.buyDraft || App.tmp.buyDraft.id !== id)) { const r = await L.get(id); if (!r) return go('#kakeibo'); App.tmp.buyDraft = { ...JSON.parse(JSON.stringify(r)), eatNow:{} }; }
+    if (!App.tmp.buyDraft) App.tmp.buyDraft = newBuyDraft();
+    const dr = App.tmp.buyDraft;
+    const editing = !!dr.id;
+    const isAI = dr.source === 'receipt-ai' && !editing;
+    const stores = L.recentStores(cat, dr.where);
+    const quick = L.quickItems(cat, dr.store, 12).filter(x => !dr.items.some(i => L.norm(i.name) === L.norm(x.name)));
+    const sugg = [...new Set([...cat.items.map(x => x.name), ...F.suggestions(App.data)])].slice(0, 700);
+    const chips = (k, opts, cur) => `<div class="chips" data-bk="${k}">${opts.map(([v, l]) => `<span class="chip ${String(cur) === String(v) ? 'on' : ''}" data-v="${esc(v)}">${esc(l)}</span>`).join('')}</div>`;
+    const eatWord = c => c === 'drink' ? '飲んだ' : '食べた';
+    const itemRow = (it, k) => {
+      const used = (it.consumed || []).reduce((a, c) => a + c.qty, 0);
+      const now = dr.eatNow[it.iid] || 0;
+      const ref = it.productRef;
+      return `<div class="bi" data-i="${k}">
+        <div class="bi-top"><input class="bi-name" data-f="name" list="bk-sugg" value="${esc(it.name)}" placeholder="商品名"><button class="bi-del" data-del="${k}" aria-label="削除">×</button></div>
+        <div class="bi-mid"><div class="stepper sm"><button class="btn sm" data-q="-1">−</button><input data-f="qty" type="number" inputmode="decimal" step="1" value="${it.qty}"><button class="btn sm" data-q="1">＋</button></div>
+          <span class="yenin">¥<input data-f="unitPrice" type="number" inputmode="numeric" value="${it.unitPrice ?? ''}" placeholder="単価"></span><span class="bi-sub" data-sub="${k}">${it.unitPrice != null ? L.yen(it.unitPrice * it.qty) : '価格不明'}</span></div>
+        <div class="bi-bot">${L.CATS.map(([v, l, em]) => `<span class="chip sm ${it.cat === v ? 'on' : ''}" data-cat="${v}">${em}${l}</span>`).join('')}
+          ${editing ? (used ? `<span class="tiny">${eatWord(it.cat)} ${used}/${it.qty}</span>` : '') : `<span class="chip sm eat ${now ? 'on' : ''}" data-eat="${k}">${it.cat === 'drink' ? '🥤' : '🍴'} 今${eatWord(it.cat)} ${now}/${it.qty}</span>`}</div>
+        ${ref ? `<div class="tiny">${ref.kcal != null ? `✅ 登録データあり：${esc(ref.store)} ${Math.round(ref.kcal)}kcal/1個（食べた時に公式値で記録）` : `登録データあり（栄養成分は不明）`}</div>` : ''}
+      </div>`;
+    };
+    view(`${back(editing ? '#buyview/' + dr.id : '#kakeibo')}<div class="kicker">FOOD SPENDING</div><h1>${isAI ? '🧾 レシートの確認' : editing ? '💴 買った物を直す' : '💴 買った物を記録'}</h1>
+      ${isAI ? `<div class="warnbox"><b>まだ登録されていません。</b>AIの読み取り結果です。店名・日時・商品・数量・価格を確認して、違うところを直してから「登録する」を押してください。</div>
+        ${dr.excluded?.length ? `<div class="card"><b>食品以外として除外（記録しません）</b><div class="small">${dr.excluded.map(x => esc(x.name) + (x.total != null ? ' ' + L.yen(x.total) : '')).join('、')}</div><div class="tiny">食品なら「＋商品を追加」で入れてください。</div></div>` : ''}` : ''}
+      <div class="card"><b>どこで買った？</b>${chips('where', L.WHERE.map(w => [w[0], w[2] + w[1]]), dr.where)}
+        ${stores.length ? `<div class="tiny" style="margin-top:8px">前に使った店（タップで入力）</div><div class="chips" id="bk-stores">${stores.map((s, i) => `<span class="chip ${L.norm(s.name) === L.norm(dr.store) ? 'on' : ''}" data-st="${i}">${esc(s.name)}</span>`).join('')}</div>` : ''}
+        <label>店名（支店名も書くと次から候補に出ます）</label><input id="bk-store" value="${esc(dr.store)}" placeholder="例：セブン-イレブン ○○店">
+        <div class="row2"><div><label>日付</label><input id="bk-date" type="date" value="${esc(dr.date)}"></div><div><label>時刻</label><input id="bk-hm" type="time" value="${esc(dr.hm)}"></div></div>
+        <label>どの食事の分？（任意）</label>${chips('mealSlot', [['', 'なし'], ['breakfast', '朝食'], ['lunch', '昼食'], ['dinner', '夕食']], dr.mealSlot || '')}</div>
+      <div class="card"><b>買った物</b>
+        <datalist id="bk-sugg">${sugg.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        <div id="bk-items">${dr.items.map(itemRow).join('') || `<p class="small">下の候補をタップするか、「＋商品を追加」。</p>`}</div>
+        <button class="btn" id="bk-add">＋ 商品を追加</button>
+        ${quick.length ? `<div class="tiny" style="margin-top:8px">前に買った物（タップで追加・価格は前回の値）</div><div class="chips">${quick.map((x, i) => `<span class="chip" data-qi="${i}">${esc(x.name)}${x.price != null ? ` <span class="tiny">¥${x.price}</span>` : ''}</span>`).join('')}</div>` : ''}
+        ${!editing ? `<p class="tiny">「今食べた／今飲んだ」を押した分だけ、食事・飲み物の記録に入ります。押さなければ「買った」だけの記録です（カロリーは足しません）。</p>` : ''}</div>
+      <div class="card gold"><div class="kc"><span class="small">商品の合計</span><b id="bk-total">¥0</b></div>
+        <label>支払金額（値引き・端数があれば直す）</label><input id="bk-paid" type="number" inputmode="numeric" value="${dr.paidEdited ? dr.paid : ''}" placeholder="商品の合計と同じ">
+        ${isAI && dr.receiptTotal != null ? `<div class="tiny">レシートの合計：${L.yen(dr.receiptTotal)}${dr.excluded?.length ? '（食品以外を含む）' : ''}</div>` : ''}
+        <div class="tiny" id="bk-unk"></div></div>
+      ${editing ? `<button class="btn ghost" id="bk-rm" style="color:var(--ng)">この記録を削除</button>` : ''}`,
+      `${!editing && !isAI ? `<button class="btn" id="bk-rc" style="flex:1">📷 レシート</button>` : ''}<button class="btn primary" id="bk-save" style="flex:2">${isAI ? '確認して登録する' : editing ? '直して保存' : '登録する'}</button>`);
+    const totals = () => {
+      const t = dr.items.reduce((s, i) => s + (i.unitPrice != null ? Math.round(i.unitPrice * i.qty) : 0), 0);
+      $('#bk-total').textContent = L.yen(t);
+      const unk = dr.items.filter(i => i.unitPrice == null).length;
+      $('#bk-unk').textContent = unk ? `価格が空欄の商品が${unk}つあります（不明のまま保存できます。支払金額が分かれば入力してください）` : '';
+      dr.items.forEach((i, k) => { const el = document.querySelector(`[data-sub="${k}"]`); if (el) el.textContent = i.unitPrice != null ? L.yen(i.unitPrice * i.qty) : '価格不明'; });
+    };
+    totals();
+    const rr = () => { App.tmp.keepScroll = window.scrollY; renderBuy(dr.id); };
+    const syncHead = () => { dr.store = $('#bk-store').value.trim(); dr.date = $('#bk-date').value || dr.date; dr.hm = $('#bk-hm').value || dr.hm; };
+    $('#bk-store').oninput = () => { dr.store = $('#bk-store').value; };
+    $('#bk-store').onchange = () => { syncHead(); if (!dr.where) { const w = L.whereOfStore(dr.store, App.data); if (w) { dr.where = w; rr(); } } };
+    $('#bk-date').onchange = $('#bk-hm').onchange = syncHead;
+    $('#bk-paid').oninput = () => { const v = $('#bk-paid').value; dr.paidEdited = v !== ''; dr.paid = v === '' ? null : +v; };
+    document.querySelectorAll('[data-bk]').forEach(g => g.onclick = e => { const c = e.target.closest('.chip'); if (!c) return; syncHead(); dr[g.dataset.bk] = c.dataset.v || null; rr(); });
+    document.querySelectorAll('[data-st]').forEach(c => c.onclick = () => { const s = stores[+c.dataset.st]; dr.store = s.name; dr.where = s.where || dr.where; dr.date = $('#bk-date').value || dr.date; dr.hm = $('#bk-hm').value || dr.hm; rr(); });
+    document.querySelectorAll('[data-qi]').forEach(c => c.onclick = () => { syncHead(); const x = quick[+c.dataset.qi]; addDraftItem(dr, x.name, { price: x.price ?? undefined, cat: x.cat }); rr(); });
+    $('#bk-add').onclick = () => { syncHead(); dr.items.push({ iid:L.rid('i'), name:'', qty:1, unitPrice:null, cat:'meal', productRef:null, consumed:[] }); App.tmp.focusLast = true; rr(); };
+    if (App.tmp.focusLast) { App.tmp.focusLast = false; const ins = document.querySelectorAll('.bi-name'); ins[ins.length - 1]?.focus(); }
+    document.querySelectorAll('.bi').forEach(row => {
+      const k = +row.dataset.i; const it = dr.items[k];
+      row.querySelectorAll('[data-f]').forEach(inp => {
+        inp.oninput = () => { const f = inp.dataset.f; if (f === 'name') it.name = inp.value; else if (f === 'qty') it.qty = Math.max(0.5, +inp.value || 1); else it.unitPrice = inp.value === '' ? null : +inp.value; totals(); };
+        if (inp.dataset.f === 'name') inp.onchange = () => {   // 名前が決まったら、登録データ・前回価格・カテゴリを引く
+          syncHead(); const ref = L.matchProduct(it.name, App.data, dr.store);
+          it.productRef = ref ? L.refOf(ref) : null;
+          if (it.unitPrice == null) { const p = L.lastPrice(cat, it.name, dr.store) ?? (ref?.priceYen != null ? Math.round(ref.priceYen) : null); if (p != null) it.unitPrice = p; }
+          it.cat = L.guessCat(it.name, ref); rr();
+        };
+      });
+      row.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { it.qty = Math.max(1, Math.round((+it.qty || 1) + +b.dataset.q)); if ((dr.eatNow[it.iid] || 0) > it.qty) dr.eatNow[it.iid] = it.qty; syncHead(); rr(); });
+      row.querySelectorAll('[data-cat]').forEach(c => c.onclick = () => { it.cat = c.dataset.cat; syncHead(); rr(); });
+      const ea = row.querySelector('[data-eat]'); if (ea) ea.onclick = () => { const n = dr.eatNow[it.iid] || 0; dr.eatNow[it.iid] = n >= it.qty ? 0 : n + 1; syncHead(); rr(); };
+      row.querySelector('[data-del]').onclick = () => { dr.items.splice(k, 1); syncHead(); rr(); };
+    });
+    const rc = $('#bk-rc'); if (rc) rc.onclick = () => readReceipt();
+    const rm = $('#bk-rm'); if (rm) rm.onclick = async () => {
+      if (!confirm('この購入記録を削除しますか？（食べた・飲んだの記録は残ります）')) return;
+      await L.remove(dr.id); App.tmp.buyDraft = null; toast('削除しました'); go('#kakeibo');
+    };
+    $('#bk-save').onclick = async () => {
+      syncHead();
+      dr.items = dr.items.filter(i => (i.name || '').trim());
+      if (!dr.items.length) return toast('買った物を1つ以上入れてください');
+      if (!dr.where) dr.where = L.whereOfStore(dr.store, App.data) || 'other';
+      const eat = { ...dr.eatNow };
+      const { eatNow, excluded, receiptTotal, ...rec } = dr;
+      const saved = await L.save(rec);
+      App.tmp.buyDraft = null;
+      let ate = 0;
+      for (const it of saved.items) if (eat[it.iid]) { await eatItem(saved.id, it.iid, eat[it.iid], { slot: saved.mealSlot || null, quiet:true }); ate++; }
+      toast(`${editing ? '直しました' : '記録しました'}：${L.yen(saved.paid)}${ate ? `（${ate}品は食事・飲み物にも記録）` : ''}`);
+      go(editing ? '#buyview/' + saved.id : '#kakeibo');
+    };
+  }
+
+  /* レシートを撮影 → AIが候補を作る → 確認画面（自動では登録しない） */
+  async function readReceipt(){
+    if (!(await S.aiReady())) return sheet(`<h2>🧾 レシートの読み取り</h2><p class="small">レシートの読み取りにはAI（GeminiのAPIキー・無料枠）が必要です。AIが無くても、手入力で記録できます。</p><button class="btn" onclick="this.closest('.sheet-bg').remove();App.go('#ai')">APIキーを設定する</button><button class="btn primary" onclick="this.closest('.sheet-bg').remove()">手入力で続ける</button>`);
+    const blob = await pickPhoto(); if (!blob) return;
+    const photoId = await DB.putPhoto(blob, 'receipt');
+    toast('AIがレシートを読んでいます…');
+    try {
+      const r = await S.readReceipt(blob);
+      const d = L.fromReceipt(r, App.data);
+      if (!d.items.length && !d.excluded.length) throw new Error('商品を読み取れませんでした');
+      const st = E.stamp();
+      App.tmp.buyDraft = newBuyDraft({ ...d, where: d.where || L.whereOfStore(d.store, App.data), date: d.date || st.date, hm: d.hm || st.hm, source:'receipt-ai', photoId, paid: d.paid, paidEdited: d.paidEdited });
+      if (!App.tmp.buyDraft.paidEdited) App.tmp.buyDraft.paid = null;
+      if (location.hash === '#buy') renderBuy(); else go('#buy');
+    } catch (e) {
+      sheet(`<h2>読み取れませんでした</h2><div class="warnbox">${esc(e.message || e)}</div><p class="small">手入力で記録できます。レシート写真は保存してあります。</p><button class="btn primary" id="rc-man">手入力で記録</button>`, bg => {
+        bg.querySelector('#rc-man').onclick = () => { bg.remove(); App.tmp.buyDraft = newBuyDraft({ photoId }); location.hash === '#buy' ? renderBuy() : go('#buy'); };
+      });
+    }
+  }
+
+  /* 食べた／飲んだ：この時点で食事・飲み物・間食の記録に入れる（購入だけでは加算しない） */
+  function askSlot(defSlot){
+    return new Promise(res => {
+      const bg = sheet(`<h2>どの食事として記録する？</h2><div class="grid2">${['breakfast','lunch','dinner'].map(s => `<button class="tile ${s === defSlot ? 'focus' : ''}" data-as="${s}" style="min-height:80px"><span class="em">${SLOT_EM[s]}</span><b>${E.MEAL_LABEL[s]}</b></button>`).join('')}<button class="tile" data-as="snack" style="min-height:80px"><span class="em">🍪</span><b>間食</b></button></div><button class="btn ghost" data-as="">やめる</button>`, b => {
+        b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { b.remove(); res(x.dataset.as || null); });
+      });
+      bg.addEventListener('click', e => { if (e.target === bg) res(null); });
+    });
+  }
+  async function eatItem(recId, iid, qty, opts = {}){
+    const rec = await L.get(recId); if (!rec) return;
+    const it = rec.items.find(i => i.iid === iid); if (!it) return;
+    const q = Math.min(L.remaining(it), qty || 1); if (q <= 0) return toast('すべて記録済みです');
+    let kind = it.cat, slot = null;
+    if (kind === 'meal') {
+      slot = opts.slot || it.mealSlot || (rec.mealSlot && rec.date === E.today() ? rec.mealSlot : null);
+      if (!slot) { slot = await askSlot(slotByTime()); if (!slot) return; }
+      if (slot === 'snack') { kind = 'snack'; slot = null; }
+    }
+    const st = E.stamp();
+    const c = L.consume(rec, iid, q, { kind, slot });
+    const ref = it.productRef;
+    const kcal = ref?.kcal != null ? Math.round(ref.kcal * q) : null;
+    const buyRef = { pid: rec.id, iid, cid: c.cid };
+    const d = await getDay();
+    let awardKind = null, awardLabel = '';
+    if (kind === 'meal') {
+      const mm = d.meals[slot] || (d.meals[slot] = { soldout:[] });
+      mm.foods = mm.foods || [];
+      mm.foods.push({ type:'other', where: { conv:'conv', super:'super', bakery:'bakery', restaurant:'restaurant' }[rec.where] || 'other', brand: rec.store || '', product: it.name, count: q, toppings:{},
+        kcal, estimated: false, min: kcal, max: kcal, estMin: 0, estMax: 0, officialKcal: kcal, officialRef: ref && kcal != null ? { id:ref.id, name:ref.name, store:ref.store, url:ref.url, verifiedAt:ref.verifiedAt } : null,
+        source: kcal != null ? 'official' : 'unknown', basis: kcal != null ? `公式値 ${ref.kcal}kcal × ${q}（${ref.store}）` : '栄養成分が不明（「直す」で量を入れると推定できます）', at: st.hm, ts: st.ts, buyRef });
+      if (mm.status !== 'cleared') { Object.assign(mm, { homeRecord: true, status:'cleared', clearNote:'買った物から記録', clearedAt: st.iso, clearedTs: st.ts, clearedHM: st.hm }); awardKind = 'homeMeal'; awardLabel = E.MEAL_LABEL[slot] + 'を記録'; }
+    } else if (kind === 'snack') {
+      d.snacks = d.snacks || [];
+      d.snacks.push({ at: st.hm, ts: st.ts, items: [it.name + (q !== 1 ? ` ×${q}` : '')], sum: kcal != null ? { kcal, protein: ref.protein != null ? ref.protein * q : 0 } : null, via:'buy', buyRef });
+      awardKind = 'snackLog'; awardLabel = '間食を記録';
+    } else {
+      d.drinkLog = d.drinkLog || [];
+      const plain = L.isPlainDrink(it.name);
+      d.drinkLog.push({ name: it.name, qty: q, at: st.hm, ts: st.ts, kcal: kcal ?? (plain ? 0 : null), estimated: kcal == null && plain, buyRef });
+      if (ref?.caffeineMg) { d.caffeine = d.caffeine || []; d.caffeine.push({ name: it.name, mg: Math.round(ref.caffeineMg * q), kind:'coffee', at: st.hm, buyRef }); }
+      // 水・お茶なら、今の飲み物ミッションも達成にする
+      const cur = d.drinks && E.currentDrink(d.drinks, st.hm);
+      if (plain && cur?.state === 'now' && !cur.slot.done) {
+        const s = d.drinks.find(x => x.id === cur.slot.id);
+        Object.assign(s, { done:true, doneAt:st.hm, doneTs:st.ts, doneTz:st.tz, at:st.hm, said:`${it.name}を飲んだ（買った物から記録）`, place: curPlace(d), buyRef });
+        d.drinks = E.reflowDrinks(d.drinks, st.hm, App.prof); c.drinkSlot = s.id;
+        awardKind = 'drink'; awardLabel = '水分補給';
+      }
+    }
+    await saveDay(d);
+    await L.save(rec, { learn:false });
+    if (awardKind) await award(awardKind, awardLabel, awardKind === 'homeMeal' ? { big:true, sub:'買った物から記録！' } : {});
+    else if (!opts.quiet) toast(`${it.name}を記録しました`);
+    if (!opts.quiet) route();
+  }
+  /* 食べた／飲んだの取り消し（その記録だけ消す） */
+  async function uneat(recId, iid, cid){
+    const rec = await L.get(recId); const it = rec?.items.find(i => i.iid === iid); if (!it) return;
+    const c = (it.consumed || []).find(x => x.cid === cid); if (!c) return;
+    if (!['mission', 'food', 'snackMission'].includes(c.kind)) {
+      const d = await getDay(c.date);
+      const keep = x => x.buyRef?.cid !== cid;
+      for (const m of Object.values(d.meals || {})) if (m.foods) m.foods = m.foods.filter(keep);
+      d.snacks = (d.snacks || []).filter(keep); d.drinkLog = (d.drinkLog || []).filter(keep); d.caffeine = (d.caffeine || []).filter(keep);
+      await saveDay(d);
+    }
+    it.consumed = it.consumed.filter(x => x.cid !== cid);
+    await L.save(rec, { learn:false });
+    toast('取り消しました'); route();
+  }
+  function eatButtons(rec, it){
+    const rem = L.remaining(it);
+    if (it.closed || rem <= 0) return '';
+    const w = it.cat === 'drink' ? '飲んだ' : '食べた';
+    return `<button class="btn sm ok" data-eatb="${rec.id}|${it.iid}|1">${it.cat === 'drink' ? '🥤' : '🍴'} ${w}</button>${rem > 1 ? `<button class="btn sm" data-eatb="${rec.id}|${it.iid}|${rem}">全部（${rem}）</button>` : ''}`;
+  }
+  function bindEat(after){
+    document.querySelectorAll('[data-eatb]').forEach(b => b.onclick = async () => { b.disabled = true; const [p, i, q] = b.dataset.eatb.split('|'); await eatItem(p, i, +q); after && after(); });
+    document.querySelectorAll('[data-close]').forEach(b => b.onclick = async () => { const [p, i] = b.dataset.close.split('|'); const r = await L.get(p); const it = r.items.find(x => x.iid === i); it.closed = !it.closed; await L.save(r, { learn:false }); toast(it.closed ? '買い置きの一覧から外しました' : '戻しました'); route(); });
+  }
+
+  /* 購入1件の詳細（食べた・飲んだボタン付き） */
+  async function renderBuyView(id){
+    const r = await L.get(id); if (!r) return go('#kakeibo');
+    const photo = await photoURL(r.photoId);
+    const sp = L.itemSpend(r);
+    const SRC = { manual:'手入力', 'receipt-ai':'レシート（AI読み取り→確認済み）', mission:'食事ミッション（登録価格）', snack:'お助け間食（登録価格）', food:'食事の記録から' };
+    view(`${back('#kakeibo')}<div class="kicker">FOOD SPENDING</div><h1>${esc(r.store || L.WHERE_SHORT[r.where] || '買い物')}</h1>
+      <div class="small">${esc(r.date)} ${esc(r.hm)}・${esc((L.WHERE.find(w => w[0] === r.where) || [,'その他'])[1])}${r.mealSlot ? '・' + E.MEAL_LABEL[r.mealSlot] + 'の分' : ''}・${esc(SRC[r.source] || '手入力')}</div>
+      <div class="card gold"><div class="kc"><span class="small">支払金額</span><b>${L.yen(r.paid)}</b></div>${r.priceUnknown ? `<div class="tiny">価格不明 ${r.priceUnknown}品（合計に含まれていません）</div>` : ''}${r.paid !== r.itemsTotal && r.itemsTotal ? `<div class="tiny">商品の合計 ${L.yen(r.itemsTotal)}（支払金額で集計します）</div>` : ''}</div>
+      <div class="card"><b>買った物</b>${r.items.map((it, k) => { const rem = L.remaining(it); const used = it.qty - rem;
+        return `<div class="item"><div class="nm">${({ meal:'🍱', drink:'🥤', snack:'🍪' })[it.cat]} ${esc(it.name)} <span class="pill">×${it.qty}</span><span class="pill">${L.CAT_LABEL[it.cat]}</span></div>
+          <div class="meta">${it.unitPrice != null ? `単価 ¥${it.unitPrice}・小計 ${L.yen(it.total)}` : '価格不明'}${it.productRef?.kcal != null ? `・登録データ ${Math.round(it.productRef.kcal)}kcal/1個` : it.productRef ? '・栄養成分は不明' : ''}</div>
+          <div class="small">${used ? `${it.cat === 'drink' ? '飲んだ' : '食べた'} ${used}/${it.qty}` : `まだ${it.cat === 'drink' ? '飲んで' : '食べて'}いません（カロリーには入っていません）`}${it.closed ? '・買い置きから除外' : ''}</div>
+          ${(it.consumed || []).map(c => `<div class="tiny">・${esc(c.date.slice(5).replace('-', '/'))} ${esc(c.at)} ${c.qty}${it.cat === 'drink' ? '本' : '個'} → ${c.kind === 'mission' ? 'ミッションの食事' : c.kind === 'food' ? '食事の記録' : c.kind === 'snackMission' ? 'お助け間食' : c.kind === 'meal' ? E.MEAL_LABEL[c.slot] || '食事' : c.kind === 'snack' ? '間食' : '飲み物'} ${!['mission','food','snackMission'].includes(c.kind) ? `<button class="btn sm ghost" data-unc="${it.iid}|${c.cid}">取消</button>` : ''}</div>`).join('')}
+          <div class="btnrow">${eatButtons(r, it)}${rem > 0 ? `<button class="btn sm ghost" data-close="${r.id}|${it.iid}">${it.closed ? '買い置きに戻す' : it.cat === 'drink' ? 'もう飲まない' : 'もう食べない'}</button>` : ''}</div></div>`; }).join('')}</div>
+      ${photo ? `<details class="card"><summary><b>レシート写真</b></summary><img class="photo" src="${photo}"></details>` : ''}
+      <p class="tiny">「食べた／飲んだ」を押した分だけ、その日の食事・飲み物の記録に入ります。登録データの栄養成分があれば公式値、無ければ「不明」のまま記録します。</p>`,
+      `<button class="btn" onclick="App.tmp.buyDraft=null;App.go('#buy/${r.id}')" style="flex:1">直す</button><button class="btn primary" onclick="App.go('#kakeibo')" style="flex:1">食費ログへ</button>`);
+    bindEat();
+    document.querySelectorAll('[data-unc]').forEach(b => b.onclick = async () => { if (!confirm('この「食べた／飲んだ」の記録を取り消しますか？')) return; const [i, c] = b.dataset.unc.split('|'); await uneat(r.id, i, c); });
+  }
+
+  /* 食費ログ（今日・今週・今月） */
+  function barsHTML(rows, total){
+    const max = Math.max(1, ...rows.map(r => r.v));
+    return rows.map(r => `<div class="hbar"><span class="hl">${r.em || ''} ${esc(r.label)}</span><span class="ht"><i style="width:${Math.max(r.v > 0 ? 3 : 0, r.v / max * 100)}%"></i></span><b>${L.yen(r.v)}</b>${total ? `<span class="tiny">${Math.round(r.v / total * 100)}%</span>` : ''}</div>`).join('');
+  }
+  function dayChart(byDay, from, to){
+    const days = []; for (let d = from; d <= to; d = E.addDays(d, 1)) days.push(d);
+    const max = Math.max(1, ...days.map(d => byDay[d] || 0));
+    const W = 320, H = 120, bw = W / days.length;
+    const label = (d, i) => days.length <= 7 ? '月火水木金土日'[(new Date(d + 'T12:00:00').getDay() + 6) % 7] : (i === 0 || +d.slice(8) % 5 === 0) ? String(+d.slice(8)) : '';
+    return `<svg viewBox="0 0 ${W} ${H + 18}" class="daychart" role="img" aria-label="日別の支出">
+      ${days.map((d, i) => { const v = byDay[d] || 0; const h = v / max * H; return `<rect x="${i * bw + bw * 0.15}" y="${H - h}" width="${bw * 0.7}" height="${Math.max(v ? 2 : 0, h)}" rx="2" class="${d === E.today() ? 'today' : ''}"><title>${d.slice(5)} ${L.yen(v)}</title></rect><text x="${i * bw + bw / 2}" y="${H + 13}" text-anchor="middle">${label(d, i)}</text>`; }).join('')}
+      <line x1="0" y1="${H}" x2="${W}" y2="${H}" class="axis"/></svg><div class="tiny">最大 ${L.yen(max)}／日</div>`;
+  }
+  async function renderKakeibo(){
+    const tab = App.tmp.kkTab || 'month';
+    const R = L.ranges();
+    const [from, to] = R[tab];
+    const [month, prevSame, week, all] = await Promise.all([L.list(R.month[0], R.month[1]), L.list(R.prevMonthSame[0], R.prevMonthSame[1]), L.list(R.week[0], R.week[1]), L.list(E.addDays(E.today(), -21), E.today())]);
+    const recs = tab === 'month' ? month : tab === 'week' ? week : month.filter(r => r.date === R.today[0]);
+    const a = L.aggregate(recs);
+    const ins = L.insights({ month, prevSame, week });
+    const stock = L.stock(all);
+    const TAB = { today:'今日', week:'今週', month:'今月' };
+    const whereRows = L.WHERE.map(([k, , em]) => ({ em, label:L.WHERE_SHORT[k], v:a.byWhere[k] || 0 })).filter(x => x.v > 0).sort((x, y) => y.v - x.v);
+    view(`${back()}<div class="kicker">FOOD SPENDING</div><h1>💴 食費ログ</h1>
+      <p class="tiny" style="margin-top:-6px">食事・飲み物・お菓子の支出だけを記録します。買っただけではカロリーに足しません。</p>
+      <div class="seg">${Object.entries(TAB).map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
+      <div class="card gold"><div class="kicker">${TAB[tab]}の食費</div><div class="bigyen">${L.yen(a.total)}</div>
+        <div class="tiny">${recs.length}件${a.priceUnknown ? `・価格不明 ${a.priceUnknown}品` : ''}${tab === 'month' && ins && prevSame.length ? `・先月の同じ時期 ${L.yen(prevSame.reduce((s, r) => s + r.paid, 0))}` : ''}</div>
+        <div style="margin-top:10px">${barsHTML(L.CATS.map(([k, l, em]) => ({ em, label:k === 'snack' ? 'お菓子' : l, v:a.byCat[k] || 0 })), a.total)}</div></div>
+      ${tab !== 'today' && recs.length ? `<div class="card"><b>日別</b>${dayChart(a.byDay, from, to)}</div>` : ''}
+      ${whereRows.length ? `<div class="card"><b>購入場所別</b><div style="margin-top:6px">${barsHTML(whereRows)}</div></div>` : ''}
+      ${ins.highlights.length || ins.comments.length ? `<div class="card insight"><div class="kicker">MONEY × FOOD ・ 今月</div>
+        ${ins.highlights.length ? `<div class="hlgrid">${ins.highlights.map(h => `<div><span>${h.em} ${esc(h.label)}</span><b>${L.yen(h.v)}</b></div>`).join('')}</div>` : ''}
+        ${ins.comments.map(c => `<div class="small cm">・${esc(c)}</div>`).join('')}</div>` : ''}
+      ${stock.length ? `<div class="card"><div class="kicker">STOCK</div><b>買い置き（まだ記録していない分）</b><p class="tiny">食べた・飲んだ時に押すと、その日の記録に入ります。</p>
+        ${stock.map(({ rec, item }, si) => `${si === 5 ? `<details class="more"><summary class="small">ほか ${stock.length - 5}点を表示</summary>` : ''}<div class="li stockrow"><span class="t"><b>${esc(item.name)}</b><div class="tiny">残り ${L.remaining(item)}/${item.qty}・${esc(rec.date.slice(5).replace('-', '/'))} ${esc(rec.store || L.WHERE_SHORT[rec.where])}</div></span><span class="btnrow">${eatButtons(rec, item)}</span></div>`).join('')}${stock.length > 5 ? '</details>' : ''}</div>` : ''}
+      <h2>${TAB[tab]}の購入</h2>
+      ${recs.length ? `<div class="list card">${recs.slice(0, 60).map(r => `<div class="li" data-bv="${r.id}"><span class="t"><b>${esc(r.store || L.WHERE_SHORT[r.where])}</b><div class="tiny">${esc(r.date.slice(5).replace('-', '/'))} ${esc(r.hm)}・${esc(r.items.map(i => i.name + (i.qty > 1 ? '×' + i.qty : '')).join('、').slice(0, 42))}</div></span><b class="small">${L.yen(r.paid)}</b><span class="chev">›</span></div>`).join('')}</div>`
+        : `<p class="small">まだ記録がありません。下の「＋ 記録」から入力できます。食事ミッションをクリアすると、その買い物は自動で記録されます。</p>`}
+      <details class="card" ${App.tmp.kkSetOpen ? 'open' : ''}><summary><b>食費ログの設定</b></summary>
+        <div class="li"><span class="t">ホームに食費を小さく表示</span><button class="toggle ${App.settings.kakeiboHome !== false ? 'on' : ''}" data-kset="kakeiboHome"></button></div>
+        <div class="li"><span class="t">食事ミッション・お助け間食をクリアしたら、登録価格で自動記録</span><button class="toggle ${App.settings.buyWithMission !== false ? 'on' : ''}" data-kset="buyWithMission"></button></div>
+        <p class="tiny">自動記録の価格は登録データの税込価格です。実際と違う時は、その記録を開いて「直す」。</p></details>`,
+      `<button class="btn" id="kk-rc" style="flex:1">📷 レシート</button><button class="btn primary" id="kk-add" style="flex:2">＋ 買った物を記録</button>`);
+    document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { App.tmp.kkTab = b.dataset.tab; renderKakeibo(); });
+    document.querySelectorAll('[data-bv]').forEach(el => el.onclick = () => go('#buyview/' + el.dataset.bv));
+    document.querySelectorAll('[data-kset]').forEach(b => b.onclick = async () => { const k = b.dataset.kset; App.settings[k] = App.settings[k] === false; await DB.set('settings', App.settings); App.tmp.kkSetOpen = true; App.tmp.keepScroll = window.scrollY; renderKakeibo(); });
+    $('#kk-add').onclick = () => { App.tmp.buyDraft = null; go('#buy'); };
+    $('#kk-rc').onclick = () => readReceipt();
+    bindEat();
+  }
+
+  /* 食事ミッション・お助け間食をクリアした時：登録価格で購入を記録（食べた分はミッション側で計上済み） */
+  async function buyFromMission(slot, m, source = 'mission'){
+    if (App.settings.buyWithMission === false || !m?.items?.length || !['conv', 'chain', 'snack'].includes(m.kind)) return null;
+    const st = E.stamp();
+    const items = m.items.filter(i => i.name).map(i => ({ iid:L.rid('i'), name: i.name + (i.flavor && !i.name.includes(i.flavor) ? ' ' + i.flavor : '') + (i.size && m.kind === 'chain' ? `（${i.size}）` : ''), qty: i.qty || 1,
+      unitPrice: i.priceYen != null ? Math.round(i.priceYen) : null, cat: i.role === 'drink' ? 'drink' : m.kind === 'snack' ? 'snack' : 'meal', mealSlot: slot || null,
+      productRef: L.refOf({ id:i.id, name:i.name, store:m.storeName, kcal:i.nutrition?.kcal ?? null, protein:i.nutrition?.protein ?? null, url:i.officialUrl, verifiedAt:i.verifiedAt }),
+      consumed: [{ cid:L.rid('c'), qty: i.qty || 1, date: st.date, at: st.hm, ts: st.ts, kind: source === 'snack' ? 'snackMission' : 'mission', slot }] }));
+    const rec = await L.save({ where: m.kind === 'chain' ? 'restaurant' : 'conv', store: m.storeName, date: st.date, hm: st.hm, items, source, mealSlot: slot || null, mealDate: st.date });
+    return rec;
+  }
+
   /* ================= ルーター ================= */
   async function route(){
     const h = location.hash || '#home';
@@ -1717,7 +2063,7 @@
     const [path, q] = h.split('?');
     const [name, arg] = path.slice(1).split('/');
     const R = { home:renderHome, setup:renderSetup, morning:renderMorning, meal:() => renderMeal(arg), mealchoose:() => { App.tmp.forceChoose = true; renderMeal(arg); }, bulk:renderBulk, snack:renderSnack, drinks:renderDrinks, train:renderTrain, body:renderBody, nearby:renderNearby,
-      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, late: () => renderLate(arg), food: () => renderFood(arg), places: renderPlaces };
+      ura:renderSettings, settings:renderSettings, fav:renderFav, vending:renderVending, notify:renderNotify, ai:renderAI, health:renderHealth, products:renderProducts, backup:renderBackup, social:renderSocial, badges:renderBadges, hk:() => handleImport(q || ''), import: () => q ? handleImport(q) : renderImport(), photos: renderPhotos, log: renderLog, late: () => renderLate(arg), food: () => renderFood(arg), places: renderPlaces, kakeibo: renderKakeibo, buy: () => renderBuy(arg), buyview: () => renderBuyView(arg) };
     try { await (R[name] || renderHome)(); } catch (e) { console.error(e); view(`<div class="warnbox">エラー：${esc(e.message)}</div><button class="btn" onclick="App.go('#home')">ホームへ</button>`); }
   }
   App.route = route;

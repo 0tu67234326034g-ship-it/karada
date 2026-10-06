@@ -53,7 +53,17 @@ JSON：{"order":[{"name":"メニュー表の表記どおり","qty":1,"kcal":null
 ${RULE}推定なので必ず幅を持たせること。写真で量が分からない場合は幅を広くし、noteに理由を書くこと。
 JSON：{"kcal_min":数値,"kcal_max":数値,"note":"30字以内（何を根拠にしたか）"}`, blob);
 
-  S.readVending = blob => gemini(`自動販売機または飲料の写真です。読み取れる商品を列挙してください。容量は表示どおり。カフェイン量は表示があれば読み取り、無ければnull。${RULE}\nJSON：{"items":[{"name":"","size":"","priceYen":null,"caffeineMg":null,"sugarFree":null}]}`, blob);
+  /* レシートの読み取り（候補を作るだけ。アプリ側で必ず確認画面を出し、自動では確定しない） */
+  S.readReceipt = blob => gemini(
+    `買い物のレシートの写真です。印字されている内容だけを読み取ってください。
+${RULE}
+・商品名は印字どおり（略称のままでよい）。数量が印字されていなければ1。価格は税込の金額が分かればそれを使う
+・食品・飲み物・お菓子以外（日用品・薬・化粧品・袋代など）は isFood:false にする
+・category は 食事=meal / 飲み物=drink / お菓子・間食=snack（食品以外は null）
+・where は コンビニ=conv / スーパー=super / ドラッグストア=drug / 飲食店=restaurant / 自販機=vending / パン屋=bakery / 不明=null
+JSON：{"store":"店名（支店名も）","where":null,"datetime":"YYYY-MM-DD HH:MM またはnull","items":[{"name":"","qty":1,"unitPrice":null,"total":null,"isFood":true,"category":"meal"}],"total":null}`, blob);
+
+  S.readVending =blob => gemini(`自動販売機または飲料の写真です。読み取れる商品を列挙してください。容量は表示どおり。カフェイン量は表示があれば読み取り、無ければnull。${RULE}\nJSON：{"items":[{"name":"","size":"","priceYen":null,"caffeineMg":null,"sugarFree":null}]}`, blob);
 
   S.readFavMenu = S.readMenu;
 

@@ -79,7 +79,8 @@
       if (data.app !== 'karada-mission' || typeof data.kv !== 'object') throw new Error('からだミッションのバックアップファイルではありません');
       const keys = Object.keys(data.kv);
       const days = keys.filter(k => k.startsWith('day:')).length;
-      return { data, keys:keys.length, days, photos:Object.keys(data.photos || {}).length, exportedAt:data.exportedAt, hasProfile:!!data.kv.profile };
+      const buys = keys.filter(k => /^buy:\d{4}-\d{2}$/.test(k)).reduce((a, k) => a + (Array.isArray(data.kv[k]) ? data.kv[k].length : 0), 0);
+      return { data, keys:keys.length, days, buys, photos:Object.keys(data.photos || {}).length, exportedAt:data.exportedAt, hasProfile:!!data.kv.profile };
     },
     async restore(data){
       const photos = [];

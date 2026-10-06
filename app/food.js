@@ -119,7 +119,7 @@
 
   /* 表示用ラベル（推定と公式を混同しない） */
   F.kcalLabel = f => {
-    if (f.kcal == null) return 'カロリー未入力';
+    if (f.kcal == null) return f.source === 'unknown' ? 'カロリー不明（登録データに栄養成分なし）' : 'カロリー未入力';
     if (!f.estimated) return `公式値 ${f.kcal}kcal`;
     const parts = [];
     if (f.officialKcal) parts.push(`公式 ${f.officialKcal}kcal ＋ 推定 ${f.estMin}〜${f.estMax}kcal`);

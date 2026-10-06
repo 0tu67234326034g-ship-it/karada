@@ -290,3 +290,56 @@ pre.code{white-space:pre-wrap;word-break:break-all;background:var(--bg2);border:
 .kc .pill{font-size:12px;padding:3px 10px}
 .nut span.est{border-color:var(--warn);color:var(--warn);font-weight:700}
 .nut span.off{border-color:var(--ok);color:var(--ok);font-weight:700}
+
+/* ---------- v7 食費ログ ---------- */
+.kstrip{display:flex;gap:8px;margin-top:10px}
+.kstrip .ks-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:9px 12px;min-height:52px;text-align:left}
+.ks-ic{font-size:18px;flex:none}
+.ks-t{display:flex;flex-direction:column;line-height:1.2;min-width:0}
+.ks-t span{font-size:11px;color:var(--dim)}
+.ks-t b{font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kstrip .chev{margin-left:auto;color:var(--dim)}
+.kstrip .ks-add{flex:none;width:52px;min-height:52px;border-radius:var(--r-sm);background:var(--card);border:1px solid var(--line);font-size:22px;color:var(--gold2)}
+.card > .li,details .li,.stockrow{display:flex;align-items:center;gap:12px;min-height:52px;padding:10px 0;border-bottom:1px solid var(--line)}
+.card > .li .t,details .li .t{flex:1;min-width:0;line-height:1.5}
+.stockrow .btnrow{margin-top:0;flex:none;flex-wrap:nowrap}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row2 input{min-width:0}
+.bi{border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;margin:10px 0;background:var(--bg2)}
+.bi-top{display:flex;gap:8px;align-items:center}
+.bi-top input{flex:1;min-width:0;background:var(--card)}
+.bi-del{flex:none;width:44px;height:44px;border-radius:12px;border:1px solid var(--line2);background:transparent;color:var(--dim);font-size:20px}
+.bi-mid{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.stepper.sm{margin:0;gap:4px;flex:none}
+.stepper.sm input{width:52px;min-height:44px;font-size:18px;padding:4px;background:var(--card)}
+.stepper.sm .btn{width:44px;min-height:44px;font-size:20px}
+.yenin{display:flex;align-items:center;gap:4px;color:var(--sub);flex:1;min-width:96px}
+.yenin input{min-height:44px;padding:8px 10px;background:var(--card)}
+.bi-sub{font-size:13px;color:var(--sub);white-space:nowrap;margin-left:auto}
+.bi-bot{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.chip.sm{min-height:40px;padding:0 11px;font-size:13px}
+.chip.eat.on{border-color:var(--ok);color:var(--ok);background:#10231b}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:4px;margin:12px 0}
+.seg button{min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--sub);font-weight:700}
+.seg button.on{background:var(--card2);color:var(--gold2)}
+.bigyen{font-size:34px;font-weight:800;letter-spacing:.01em;font-variant-numeric:tabular-nums;margin:2px 0 2px}
+.hbar{display:grid;grid-template-columns:7.2em 1fr auto auto;align-items:center;gap:8px;min-height:30px;font-size:14px}
+.hbar .hl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbar .ht{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.hbar .ht i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold2))}
+.hbar b{font-variant-numeric:tabular-nums;font-size:14px;text-align:right}
+.hbar .tiny{width:2.6em;text-align:right}
+.daychart{width:100%;height:auto;display:block;margin-top:8px}
+.daychart rect{fill:var(--gold);opacity:.75}
+.daychart rect.today{opacity:1;fill:var(--gold2)}
+.daychart text{fill:var(--dim);font-size:9px}
+.daychart .axis{stroke:var(--line2)}
+.insight .hlgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 6px}
+.insight .hlgrid div{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:9px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.insight .hlgrid span{font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insight .hlgrid b{font-size:17px;font-variant-numeric:tabular-nums}
+.insight .cm{margin-top:4px}
+@media (max-width:380px){ .hbar{grid-template-columns:6.4em 1fr auto} .hbar .tiny{display:none} .bigyen{font-size:30px} }
+.chip[data-qi],#bk-stores .chip{white-space:normal;max-width:100%;height:auto;padding:6px 13px;line-height:1.35}
+details.more summary{padding:10px 0;color:var(--gold2);cursor:pointer}
+.row2>div{min-width:0}.row2 input{max-width:100%}
